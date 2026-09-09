@@ -99,7 +99,7 @@ jobs:
             msvc_arch: ''
             platform_family: macos
           - target: osx-x64
-            os: macos-13
+            os: macos-15-intel
             rid: osx-x64
             arch: x64
             msvc_arch: ''

@@ -36,10 +36,17 @@ $outputMsiPath = Join-Path $OutputDir $msiName
 
 Write-Host "Building Windows MSI Installer: $outputMsiPath (Version: $msiVersion, Arch: $wixArch)"
 
-# Ensure WiX tool is available
-if (-not (Get-Command wix -ErrorAction SilentlyContinue)) {
-    Write-Host "Installing WiX .NET global tool..."
-    dotnet tool install --global wix
+# Ensure WiX tool is available (pin to v5.0.2 to avoid v7 OSMF EULA requirement)
+$wixCmd = Get-Command wix -ErrorAction SilentlyContinue
+if (-not $wixCmd) {
+    Write-Host "Installing WiX .NET global tool (v5.0.2)..."
+    dotnet tool install --global wix --version 5.0.2
+} else {
+    $wixVer = & wix --version 2>&1
+    if ($wixVer -notlike "5.*") {
+        Write-Host "Updating WiX .NET global tool to v5.0.2..."
+        dotnet tool update --global wix --version 5.0.2
+    }
 }
 
 $dotnetTools = Join-Path $env:USERPROFILE ".dotnet\tools"

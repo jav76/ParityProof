@@ -61,7 +61,7 @@ The release pipeline compiles standalone Native AOT binaries across **7 platform
 | `win-arm64` | `windows-latest` | ARM64 | `ParityProof-v<VER>-win-arm64.zip` | `ParityProof-v<VER>-win-arm64.msi` |
 | `win-x86` | `windows-latest` | x86 (32-bit) | `ParityProof-v<VER>-win-x86.zip` | `ParityProof-v<VER>-win-x86.msi` |
 | `osx-arm64` | `macos-14` | Apple Silicon | `ParityProof-v<VER>-osx-arm64.tar.gz` | `ParityProof-v<VER>-osx-arm64.dmg` |
-| `osx-x64` | `macos-13` | Intel Mac | `ParityProof-v<VER>-osx-x64.tar.gz` | `ParityProof-v<VER>-osx-x64.dmg` |
+| `osx-x64` | `macos-15-intel` | Intel Mac | `ParityProof-v<VER>-osx-x64.tar.gz` | `ParityProof-v<VER>-osx-x64.dmg` |
 
 ### Cryptographic Verification
 Every release job aggregates all archives and installers, computing a unified `checksums-sha256.txt` manifest attached to the GitHub Release.
