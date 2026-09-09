@@ -6,6 +6,8 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Input.Platform;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -20,6 +22,7 @@ using ParityProof.Engine.Matching;
 using ParityProof.Engine.Reporting;
 using ParityProof.Engine.Transfer;
 using ParityProof.Platform;
+using ParityProof.Platform.Common;
 
 namespace ParityProof.App.ViewModels;
 
@@ -261,6 +264,20 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private bool _isInspectorOpen;
 
+    partial void OnIsInspectorOpenChanged(bool value)
+    {
+        if (value && SelectedMediaItem is not null && InspectorThumbnail is null && !IsLoadingThumbnail)
+        {
+            _ = LoadInspectorDetailsAsync(SelectedMediaItem);
+        }
+    }
+
+    [ObservableProperty]
+    private double _sidebarWidth = 340;
+
+    [ObservableProperty]
+    private double _inspectorWidth = 360;
+
     [ObservableProperty]
     private Bitmap? _inspectorThumbnail;
 
@@ -343,6 +360,116 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     private void ToggleInspector()
     {
         IsInspectorOpen = !IsInspectorOpen;
+    }
+
+    [ObservableProperty]
+    private bool _showTypeColumn = true;
+
+    [ObservableProperty]
+    private bool _showFileColumn = true;
+
+    [ObservableProperty]
+    private bool _showFormatColumn = true;
+
+    [ObservableProperty]
+    private bool _showSizeColumn = true;
+
+    [ObservableProperty]
+    private bool _showStatusColumn = true;
+
+    [ObservableProperty]
+    private bool _showDestinationsColumn = true;
+
+    [ObservableProperty]
+    private bool _showRelativePathColumn = true;
+
+    [RelayCommand]
+    private void OpenFile(MediaItemViewModel? item)
+    {
+        MediaItemViewModel? target = item ?? SelectedMediaItem;
+        if (target is not null)
+        {
+            FileOpener.OpenFile(target.FullPath);
+        }
+    }
+
+    [RelayCommand]
+    private void RevealInFileManager(MediaItemViewModel? item)
+    {
+        MediaItemViewModel? target = item ?? SelectedMediaItem;
+        if (target is not null)
+        {
+            FileOpener.RevealInFileManager(target.FullPath);
+        }
+    }
+
+    [RelayCommand]
+    private async Task CopyRelativePathAsync(MediaItemViewModel? item)
+    {
+        MediaItemViewModel? target = item ?? SelectedMediaItem;
+        if (target is not null)
+        {
+            await SetClipboardTextAsync(target.RelativePath).ConfigureAwait(false);
+        }
+    }
+
+    [RelayCommand]
+    private async Task CopyFullPathAsync(MediaItemViewModel? item)
+    {
+        MediaItemViewModel? target = item ?? SelectedMediaItem;
+        if (target is not null)
+        {
+            await SetClipboardTextAsync(target.FullPath).ConfigureAwait(false);
+        }
+    }
+
+    [RelayCommand]
+    private async Task CopyHashFingerprintAsync(MediaItemViewModel? item)
+    {
+        MediaItemViewModel? target = item ?? SelectedMediaItem;
+        if (target is null)
+        {
+            return;
+        }
+
+        string hashText = target.HasFullHash
+            ? target.FullHashHex
+            : target.HasDeepHash
+                ? target.DeepHashHex
+                : target.HeadHashHex;
+
+        await SetClipboardTextAsync(hashText).ConfigureAwait(false);
+    }
+
+    [RelayCommand]
+    private void InspectDetails(MediaItemViewModel? item)
+    {
+        if (item is not null)
+        {
+            SelectedMediaItem = item;
+            IsInspectorOpen = true;
+        }
+        else if (SelectedMediaItem is not null)
+        {
+            IsInspectorOpen = true;
+        }
+    }
+
+    private static async Task SetClipboardTextAsync(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return;
+        }
+
+        await Dispatcher.UIThread.InvokeAsync(async () =>
+        {
+            if (Avalonia.Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop &&
+                desktop.MainWindow?.Clipboard is not null)
+            {
+                await desktop.MainWindow.Clipboard.SetTextAsync(text);
+            }
+        });
     }
 
     public MainViewModel()
@@ -438,7 +565,8 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         {
             if (string.IsNullOrEmpty(filter) ||
                 group.FileName.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
-                group.Files.Any(f => f.RelativePath.Contains(filter, StringComparison.OrdinalIgnoreCase)))
+                group.Files.Any(f => f.RelativePath.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
+                                     f.FullPath.Contains(filter, StringComparison.OrdinalIgnoreCase)))
             {
                 FilteredDuplicateGroups.Add(group);
             }

@@ -2,6 +2,10 @@ using System;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
+using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Input.Platform;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ParityProof.Core.Models;
@@ -29,9 +33,41 @@ public sealed partial class DuplicateFileItemViewModel : ViewModelBase
     }
 
     [RelayCommand]
+    private void OpenFile()
+    {
+        FileOpener.OpenFile(FullPath);
+    }
+
+    [RelayCommand]
     private void RevealInFolder()
     {
         FileOpener.RevealInFileManager(FullPath);
+    }
+
+    [RelayCommand]
+    private async Task CopyFullPathAsync()
+    {
+        await Dispatcher.UIThread.InvokeAsync(async () =>
+        {
+            if (Avalonia.Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop &&
+                desktop.MainWindow?.Clipboard is not null)
+            {
+                await desktop.MainWindow.Clipboard.SetTextAsync(FullPath);
+            }
+        });
+    }
+
+    [RelayCommand]
+    private async Task CopyRelativePathAsync()
+    {
+        await Dispatcher.UIThread.InvokeAsync(async () =>
+        {
+            if (Avalonia.Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop &&
+                desktop.MainWindow?.Clipboard is not null)
+            {
+                await desktop.MainWindow.Clipboard.SetTextAsync(RelativePath);
+            }
+        });
     }
 }
 

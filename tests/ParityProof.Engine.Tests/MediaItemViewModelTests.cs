@@ -201,4 +201,70 @@ public sealed class MediaItemViewModelTests
         Assert.False(headRow.IsMatch);
         Assert.False(headRow.IsMismatch);
     }
+
+    [Theory]
+    [InlineData(MediaCategory.PhotoRaw, "📷", "#F59E0B", "RAW Photo")]
+    [InlineData(MediaCategory.PhotoStandard, "🖼️", "#10B981", "Standard Photo")]
+    [InlineData(MediaCategory.Video, "🎬", "#38BDF8", "Video")]
+    [InlineData(MediaCategory.Sidecar, "📄", "#94A3B8", "Metadata Sidecar")]
+    [InlineData(MediaCategory.Other, "📁", "#64748B", "Other Media File")]
+    public void CategoryProperties_ReturnExpectedVisualAttributes(
+        MediaCategory category,
+        string expectedGlyph,
+        string expectedColor,
+        string expectedTooltip)
+    {
+        MediaFile source = new(
+            RelativePath: "DCIM/test.file",
+            FullPath: "/card/DCIM/test.file",
+            FileLength: 1024,
+            LastWriteTimeUtc: DateTime.UtcNow,
+            Category: category);
+
+        VerificationResultItem item = new(source, new Dictionary<string, FileMatchStatus>());
+        MediaItemViewModel vm = new(item);
+
+        Assert.Equal(expectedGlyph, vm.CategoryGlyph);
+        Assert.Equal(expectedColor, vm.CategoryColor);
+        Assert.Equal(expectedTooltip, vm.CategoryTooltip);
+    }
+
+    [Fact]
+    public void MainViewModel_ColumnVisibilityDefaults_AllTrue()
+    {
+        MainViewModel vm = new();
+
+        Assert.True(vm.ShowTypeColumn);
+        Assert.True(vm.ShowFileColumn);
+        Assert.True(vm.ShowFormatColumn);
+        Assert.True(vm.ShowSizeColumn);
+        Assert.True(vm.ShowStatusColumn);
+        Assert.True(vm.ShowDestinationsColumn);
+        Assert.True(vm.ShowRelativePathColumn);
+    }
+
+    [Fact]
+    public void DuplicateFileItemViewModel_ExposesFullPathAndProperties()
+    {
+        MediaFile mediaFile = new(
+            RelativePath: "Wedding/DSC00013.ARW",
+            FullPath: "/mnt/nas/backups/Wedding/DSC00013.ARW",
+            FileLength: 47 * 1024 * 1024,
+            LastWriteTimeUtc: DateTime.UtcNow,
+            Category: MediaCategory.PhotoRaw);
+
+        DuplicateFileItem item = new(
+            File: mediaFile,
+            DestinationId: "truenas_primary",
+            DestinationName: "truenas_primary",
+            IsPrimary: false,
+            RelativePath: "Wedding/DSC00013.ARW");
+
+        DuplicateFileItemViewModel vm = new(item);
+
+        Assert.Equal("/mnt/nas/backups/Wedding/DSC00013.ARW", vm.FullPath);
+        Assert.Equal("Wedding/DSC00013.ARW", vm.RelativePath);
+        Assert.Equal("truenas_primary", vm.DestinationName);
+        Assert.Equal("DUPLICATE", vm.StatusBadgeText);
+    }
 }

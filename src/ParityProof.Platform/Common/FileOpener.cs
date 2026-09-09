@@ -55,4 +55,46 @@ public static class FileOpener
             // Suppress process execution errors on restricted environments
         }
     }
+
+    public static void OpenFile(string filePath)
+    {
+        if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+        {
+            return;
+        }
+
+        try
+        {
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = filePath,
+                    UseShellExecute = true
+                });
+            }
+            else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "open",
+                    Arguments = $"\"{filePath}\"",
+                    UseShellExecute = true
+                });
+            }
+            else
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "xdg-open",
+                    Arguments = $"\"{filePath}\"",
+                    UseShellExecute = true
+                });
+            }
+        }
+        catch
+        {
+            // Suppress process execution errors on restricted environments
+        }
+    }
 }

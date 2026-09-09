@@ -8,6 +8,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="850"
         x:Class="ParityProof.App.Views.MainWindow"
+        x:Name="MainWindowRoot"
         x:DataType="vm:MainViewModel"
         Background="#0B0F17"
         Foreground="#F3F4F6"
@@ -17,6 +18,10 @@
     <Design.DataContext>
         <vm:MainViewModel />
     </Design.DataContext>
+
+    <Window.KeyBindings>
+        <KeyBinding Gesture="Escape" Command="{Binding CloseInspectorCommand}"/>
+    </Window.KeyBindings>
 
     <Grid RowDefinitions="Auto,Auto,*" Margin="20">
         <!-- 1. Header Bar -->
@@ -103,12 +108,13 @@
                 </Border>
             </Grid>
 
-            <!-- Sleek Glassmorphic Progress Hub (Always in layout, shows Idle or Active states) -->
+            <!-- Sleek Glassmorphic Progress Hub (Auto-collapses when idle, expands when active) -->
             <Border Background="#131B2E"
                     BorderBrush="{Binding OperationAccentColor}"
                     BorderThickness="1.5"
                     CornerRadius="10"
-                    Padding="16,14">
+                    Padding="16,14"
+                    IsVisible="{Binding IsOperationActive}">
                 <StackPanel Spacing="12">
                     <!-- 1. Header & Quick Actions -->
                     <Grid ColumnDefinitions="Auto,*,Auto">
@@ -230,9 +236,9 @@
         </StackPanel>
 
         <!-- 3. Main Workspace: Left Controls Panel & Right Media Grid -->
-        <Grid Grid.Row="2" ColumnDefinitions="360,16,*">
+        <Grid Grid.Row="2" ColumnDefinitions="Auto,Auto,*">
             <!-- Left Controls Panel -->
-            <Border Grid.Column="0" Background="#111827" BorderBrush="#1F2937" BorderThickness="1" CornerRadius="8" Padding="16">
+            <Border Grid.Column="0" Width="{Binding SidebarWidth}" MinWidth="240" MaxWidth="500" Background="#111827" BorderBrush="#1F2937" BorderThickness="1" CornerRadius="8" Padding="16">
                 <ScrollViewer>
                     <StackPanel Spacing="16">
                         <!-- Source Card Section -->
@@ -436,6 +442,15 @@
                 </ScrollViewer>
             </Border>
 
+            <!-- Left Sidebar Draggable Resizing Splitter Handle -->
+            <Border Grid.Column="1" Width="12" Background="Transparent" Cursor="SizeWestEast"
+                    PointerPressed="OnSidebarSplitterPointerPressed"
+                    PointerMoved="OnSidebarSplitterPointerMoved"
+                    PointerReleased="OnSidebarSplitterPointerReleased"
+                    ToolTip.Tip="Drag to resize controls sidebar">
+                <Border Width="2" Background="#1F2937" HorizontalAlignment="Center" VerticalAlignment="Stretch" CornerRadius="1"/>
+            </Border>
+
             <!-- Right Media Grid Panel -->
             <Border Grid.Column="2" Background="#111827" BorderBrush="#1F2937" BorderThickness="1" CornerRadius="8" Padding="16">
                 <Grid RowDefinitions="Auto,*">
@@ -463,9 +478,34 @@
                             </Button>
                         </StackPanel>
 
-                        <!-- Search Box -->
-                        <TextBox Grid.Column="2" Text="{Binding SearchText, Mode=TwoWay}" PlaceholderText="Search files..." Width="220"
-                                 Background="#1E293B" Foreground="#F8FAFC" BorderBrush="#334155"/>
+                        <!-- Search Box & Column Visibility Flyout & Inspector Toggle -->
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
+                            <TextBox Text="{Binding SearchText, Mode=TwoWay}" PlaceholderText="Search files..." Width="200"
+                                     Background="#1E293B" Foreground="#F8FAFC" BorderBrush="#334155"/>
+                            <ToggleButton IsChecked="{Binding IsInspectorOpen, Mode=TwoWay}"
+                                          Content="Inspector ◫"
+                                          Background="#1E293B" Foreground="#94A3B8" BorderBrush="#334155"
+                                          Padding="10,6" FontSize="12"
+                                          ToolTip.Tip="Toggle Media Inspector Panel (Esc)"/>
+                            <Button Content="Columns ▾" Background="#1E293B" Foreground="#94A3B8" BorderBrush="#334155" Padding="10,6" FontSize="12">
+                                <Button.Flyout>
+                                    <Flyout Placement="BottomEdgeAlignedRight">
+                                        <Border Background="#1E293B" BorderBrush="#334155" BorderThickness="1" CornerRadius="6" Padding="12,10">
+                                            <StackPanel Spacing="6" MinWidth="140">
+                                                <TextBlock Text="TOGGLE COLUMNS" FontSize="10" FontWeight="Bold" Foreground="#64748B" Margin="0,0,0,4"/>
+                                                <CheckBox Content="File Type" IsChecked="{Binding ShowTypeColumn}" Foreground="#E2E8F0" FontSize="12"/>
+                                                <CheckBox Content="File Name" IsChecked="{Binding ShowFileColumn}" Foreground="#E2E8F0" FontSize="12"/>
+                                                <CheckBox Content="Format" IsChecked="{Binding ShowFormatColumn}" Foreground="#E2E8F0" FontSize="12"/>
+                                                <CheckBox Content="Size" IsChecked="{Binding ShowSizeColumn}" Foreground="#E2E8F0" FontSize="12"/>
+                                                <CheckBox Content="Status" IsChecked="{Binding ShowStatusColumn}" Foreground="#E2E8F0" FontSize="12"/>
+                                                <CheckBox Content="Destinations" IsChecked="{Binding ShowDestinationsColumn}" Foreground="#E2E8F0" FontSize="12"/>
+                                                <CheckBox Content="Relative Path" IsChecked="{Binding ShowRelativePathColumn}" Foreground="#E2E8F0" FontSize="12"/>
+                                            </StackPanel>
+                                        </Border>
+                                    </Flyout>
+                                </Button.Flyout>
+                            </Button>
+                        </StackPanel>
                     </Grid>
 
                     <!-- Main Media View with Collapsible Inspector Drawer (Visible when not on Duplicates Tab) -->
@@ -475,41 +515,113 @@
                                   SelectedItem="{Binding SelectedMediaItem, Mode=TwoWay}"
                                   AutoGenerateColumns="False"
                                   IsReadOnly="True" GridLinesVisibility="Horizontal" HeadersVisibility="Column"
+                                  CanUserResizeColumns="True"
+                                  CanUserReorderColumns="True"
+                                  CanUserSortColumns="True"
+                                  SelectionMode="Extended"
+                                  RowHeight="32"
+                                  HorizontalScrollBarVisibility="Auto"
+                                  DoubleTapped="OnDataGridDoubleTapped"
                                   Background="#0B0F17" BorderBrush="#1F2937" BorderThickness="1">
+                            <DataGrid.ContextMenu>
+                                <ContextMenu Background="#1E293B" BorderBrush="#334155">
+                                    <MenuItem Header="🔍 Inspect Details"
+                                              Command="{Binding InspectDetailsCommand}"
+                                              CommandParameter="{Binding SelectedMediaItem}"/>
+                                    <MenuItem Header="↗ Open in Default App"
+                                              Command="{Binding OpenFileCommand}"
+                                              CommandParameter="{Binding SelectedMediaItem}"/>
+                                    <MenuItem Header="📁 Reveal in File Manager"
+                                              Command="{Binding RevealInFileManagerCommand}"
+                                              CommandParameter="{Binding SelectedMediaItem}"/>
+                                    <Separator Background="#334155"/>
+                                    <MenuItem Header="📋 Copy Relative Path"
+                                              Command="{Binding CopyRelativePathCommand}"
+                                              CommandParameter="{Binding SelectedMediaItem}"/>
+                                    <MenuItem Header="📋 Copy Full Path"
+                                              Command="{Binding CopyFullPathCommand}"
+                                              CommandParameter="{Binding SelectedMediaItem}"/>
+                                    <MenuItem Header="🔑 Copy xxHash Checksum"
+                                              Command="{Binding CopyHashFingerprintCommand}"
+                                              CommandParameter="{Binding SelectedMediaItem}"/>
+                                </ContextMenu>
+                            </DataGrid.ContextMenu>
                             <DataGrid.Columns>
-                                <DataGridTextColumn Header="File" Binding="{Binding FileName}" Width="2*"/>
-                                <DataGridTextColumn Header="Format" Binding="{Binding Extension}" Width="80"/>
-                                <DataGridTextColumn Header="Size" Binding="{Binding SizeFormatted}" Width="100"/>
-                                <DataGridTemplateColumn Header="Status" Width="120">
+                                <DataGridTemplateColumn Header="Type" Width="44" CanUserResize="False" CanUserReorder="True" IsVisible="{Binding ShowTypeColumn}">
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate x:DataType="vm:MediaItemViewModel">
-                                            <Border Background="{Binding StatusBadgeColor}" CornerRadius="4" Padding="6,2" HorizontalAlignment="Left">
+                                            <TextBlock Text="{Binding CategoryGlyph}"
+                                                       Foreground="{Binding CategoryColor}"
+                                                       ToolTip.Tip="{Binding CategoryTooltip}"
+                                                       FontSize="13"
+                                                       HorizontalAlignment="Center"
+                                                       VerticalAlignment="Center"/>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTextColumn Header="File" Binding="{Binding FileName}" Width="180" MinWidth="90" IsVisible="{Binding ShowFileColumn}"/>
+                                <DataGridTextColumn Header="Format" Binding="{Binding Extension}" Width="80" MinWidth="50" IsVisible="{Binding ShowFormatColumn}"/>
+                                <DataGridTemplateColumn Header="Size" Width="95" MinWidth="65" SortMemberPath="FileLength" IsVisible="{Binding ShowSizeColumn}">
+                                    <DataGridTemplateColumn.HeaderTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="Size" HorizontalAlignment="Right" Margin="0,0,8,0"/>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.HeaderTemplate>
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate x:DataType="vm:MediaItemViewModel">
+                                            <TextBlock Text="{Binding SizeFormatted}"
+                                                       FontFamily="Inter, monospace"
+                                                       HorizontalAlignment="Right"
+                                                       VerticalAlignment="Center"
+                                                       Margin="0,0,8,0"
+                                                       Foreground="#94A3B8"/>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTemplateColumn Header="Status" Width="110" MinWidth="75" SortMemberPath="StatusText" IsVisible="{Binding ShowStatusColumn}">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate x:DataType="vm:MediaItemViewModel">
+                                            <Border Background="{Binding StatusBadgeColor}" CornerRadius="4" Padding="6,2" HorizontalAlignment="Left" VerticalAlignment="Center">
                                                 <TextBlock Text="{Binding StatusText}" Foreground="#FFFFFF" FontSize="11" FontWeight="Bold"/>
                                             </Border>
                                         </DataTemplate>
                                     </DataGridTemplateColumn.CellTemplate>
                                 </DataGridTemplateColumn>
-                                <DataGridTextColumn Header="Destinations" Binding="{Binding DestinationSummary}" Width="3*"/>
-                                <DataGridTextColumn Header="Relative Path" Binding="{Binding RelativePath}" Width="3*"/>
+                                <DataGridTextColumn Header="Destinations" Binding="{Binding DestinationSummary}" Width="200" MinWidth="90" IsVisible="{Binding ShowDestinationsColumn}"/>
+                                <DataGridTextColumn Header="Relative Path" Binding="{Binding RelativePath}" Width="*" MinWidth="100" IsVisible="{Binding ShowRelativePathColumn}"/>
                             </DataGrid.Columns>
                         </DataGrid>
 
-                        <!-- Side-by-Side Inspector Drawer Panel -->
-                        <Border Grid.Column="1" Width="360" Margin="12,0,0,0"
-                                Background="#131B2E" BorderBrush="#334155" BorderThickness="1"
-                                CornerRadius="8" Padding="14"
-                                IsVisible="{Binding IsInspectorOpen}">
-                            <ScrollViewer>
-                                <StackPanel Spacing="12">
-                                    <!-- Inspector Header -->
-                                    <Grid ColumnDefinitions="*,Auto">
-                                        <StackPanel Grid.Column="0" Spacing="2">
-                                            <TextBlock Text="MEDIA INSPECTOR" FontSize="10" FontWeight="Bold" Foreground="#38BDF8" LetterSpacing="1"/>
-                                            <TextBlock Text="{Binding SelectedMediaItem.FileName}" FontSize="13" FontWeight="Bold" Foreground="#F8FAFC" TextTrimming="CharacterEllipsis"/>
-                                        </StackPanel>
-                                        <Button Grid.Column="1" Content="✕" Command="{Binding CloseInspectorCommand}"
-                                                Background="Transparent" Foreground="#94A3B8" FontSize="14" Padding="6,2" VerticalAlignment="Top"/>
-                                    </Grid>
+                        <!-- Side-by-Side Inspector Drawer with Pointer Drag Resizing -->
+                        <Grid Grid.Column="1" ColumnDefinitions="Auto,*"
+                              Width="{Binding InspectorWidth}"
+                              IsVisible="{Binding IsInspectorOpen}">
+                            <!-- Inspector Draggable Resizing Splitter Handle -->
+                            <Border Grid.Column="0" Width="12" Background="Transparent" Cursor="SizeWestEast"
+                                    PointerPressed="OnInspectorSplitterPointerPressed"
+                                    PointerMoved="OnInspectorSplitterPointerMoved"
+                                    PointerReleased="OnInspectorSplitterPointerReleased"
+                                    ToolTip.Tip="Drag to resize inspector width">
+                                <Border Width="2" Background="#1F2937" HorizontalAlignment="Center" VerticalAlignment="Stretch" CornerRadius="1"/>
+                            </Border>
+
+                            <!-- Side-by-Side Inspector Drawer Panel -->
+                            <Border Grid.Column="1" Margin="2,0,0,0"
+                                    Background="#131B2E" BorderBrush="#334155" BorderThickness="1"
+                                    CornerRadius="8" Padding="14">
+                                <ScrollViewer>
+                                    <StackPanel Spacing="12">
+                                        <!-- Inspector Header -->
+                                        <Grid ColumnDefinitions="*,Auto">
+                                            <StackPanel Grid.Column="0" Spacing="2">
+                                                <TextBlock Text="MEDIA INSPECTOR" FontSize="10" FontWeight="Bold" Foreground="#38BDF8" LetterSpacing="1"/>
+                                                <TextBlock Text="{Binding SelectedMediaItem.FileName}" FontSize="13" FontWeight="Bold" Foreground="#F8FAFC" TextTrimming="CharacterEllipsis"/>
+                                            </StackPanel>
+                                            <Button Grid.Column="1" Content="✕" Command="{Binding CloseInspectorCommand}"
+                                                    Background="#1E293B" Foreground="#94A3B8" BorderBrush="#334155" BorderThickness="1"
+                                                    CornerRadius="4" FontSize="12" FontWeight="Bold" Padding="8,3" VerticalAlignment="Top"
+                                                    ToolTip.Tip="Close Inspector (Esc)"/>
+                                        </Grid>
 
                                     <!-- Thumbnail Preview Card -->
                                     <Border Background="#0B0F17" BorderBrush="#1E293B" BorderThickness="1" CornerRadius="6" Height="190" ClipToBounds="True">
@@ -660,6 +772,7 @@
                             </ScrollViewer>
                         </Border>
                     </Grid>
+                </Grid>
 
                     <!-- Duplicates Explorer View (Visible on Duplicates Tab) -->
                     <Grid Grid.Row="1" RowDefinitions="Auto,*" IsVisible="{Binding IsDuplicatesTabActive}">
@@ -724,6 +837,15 @@
                                                         <ItemsControl.ItemTemplate>
                                                             <DataTemplate x:DataType="vm:DuplicateFileItemViewModel">
                                                                 <Border Background="#111827" CornerRadius="6" Padding="10,6" Margin="0,0,0,6" BorderBrush="#1F2937" BorderThickness="1">
+                                                                    <Border.ContextMenu>
+                                                                        <ContextMenu Background="#1E293B" BorderBrush="#334155">
+                                                                            <MenuItem Header="📁 Reveal in File Manager" Command="{Binding RevealInFolderCommand}"/>
+                                                                            <MenuItem Header="↗ Open in Default App" Command="{Binding OpenFileCommand}"/>
+                                                                            <Separator Background="#334155"/>
+                                                                            <MenuItem Header="📋 Copy Full Path" Command="{Binding CopyFullPathCommand}"/>
+                                                                            <MenuItem Header="📋 Copy Relative Path" Command="{Binding CopyRelativePathCommand}"/>
+                                                                        </ContextMenu>
+                                                                    </Border.ContextMenu>
                                                                     <Grid ColumnDefinitions="Auto,Auto,*,Auto">
                                                                         <Border Grid.Column="0" Background="{Binding StatusBadgeBackground}" CornerRadius="4" Padding="6,2" Margin="0,0,8,0" VerticalAlignment="Center">
                                                                             <TextBlock Text="{Binding StatusBadgeText}" FontSize="10" FontWeight="Bold" Foreground="{Binding StatusBadgeForeground}"/>
@@ -731,7 +853,7 @@
                                                                         <Border Grid.Column="1" Background="#1E293B" CornerRadius="4" Padding="6,2" Margin="0,0,8,0" VerticalAlignment="Center">
                                                                             <TextBlock Text="{Binding DestinationName}" FontSize="11" FontWeight="SemiBold" Foreground="#38BDF8"/>
                                                                         </Border>
-                                                                        <TextBlock Grid.Column="2" Text="{Binding RelativePath}" FontSize="11" Foreground="#E2E8F0"
+                                                                        <TextBlock Grid.Column="2" Text="{Binding FullPath}" FontSize="11" Foreground="#E2E8F0"
                                                                                    VerticalAlignment="Center" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding FullPath}"/>
                                                                         <Button Grid.Column="3" Content="Reveal in Folder" Command="{Binding RevealInFolderCommand}"
                                                                                 Background="#334155" Foreground="#F8FAFC" FontSize="10" Padding="8,4" Margin="8,0,0,0" VerticalAlignment="Center"/>

@@ -201,6 +201,33 @@ public sealed partial class MediaItemViewModel : ViewModelBase
     public string FileName => Path.GetFileName(Item.SourceFile.FullPath);
     public string Extension => Path.GetExtension(Item.SourceFile.FullPath).ToUpperInvariant();
     public string Category => Item.SourceFile.Category.ToString();
+    public string CategoryGlyph => Item.SourceFile.Category switch
+    {
+        MediaCategory.PhotoRaw => "📷",
+        MediaCategory.PhotoStandard => "🖼️",
+        MediaCategory.Video => "🎬",
+        MediaCategory.Sidecar => "📄",
+        _ => "📁"
+    };
+
+    public string CategoryColor => Item.SourceFile.Category switch
+    {
+        MediaCategory.PhotoRaw => "#F59E0B",
+        MediaCategory.PhotoStandard => "#10B981",
+        MediaCategory.Video => "#38BDF8",
+        MediaCategory.Sidecar => "#94A3B8",
+        _ => "#64748B"
+    };
+
+    public string CategoryTooltip => Item.SourceFile.Category switch
+    {
+        MediaCategory.PhotoRaw => "RAW Photo",
+        MediaCategory.PhotoStandard => "Standard Photo",
+        MediaCategory.Video => "Video",
+        MediaCategory.Sidecar => "Metadata Sidecar",
+        _ => "Other Media File"
+    };
+
     public long FileLength => Item.SourceFile.FileLength;
 
     public string SizeFormatted
