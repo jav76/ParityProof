@@ -1,0 +1,494 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:ParityProof.App.ViewModels"
+        xmlns:core="using:ParityProof.Core.Enums"
+        xmlns:models="using:ParityProof.Core.Models"
+        xmlns:conv="using:ParityProof.App.Converters"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="850"
+        x:Class="ParityProof.App.Views.MainWindow"
+        x:DataType="vm:MainViewModel"
+        Background="#0B0F17"
+        Foreground="#F3F4F6"
+        MinWidth="960" MinHeight="650"
+        Title="ParityProof : Pro Media Ingest &amp; Backup Verification">
+
+    <Design.DataContext>
+        <vm:MainViewModel />
+    </Design.DataContext>
+
+    <Grid RowDefinitions="Auto,Auto,*" Margin="20">
+        <!-- 1. Header Bar -->
+        <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,16">
+            <StackPanel Grid.Column="0" Orientation="Vertical" Spacing="4">
+                <TextBlock Text="PARITYPROOF" FontSize="20" FontWeight="Bold" Foreground="#38BDF8" LetterSpacing="1"/>
+                <TextBlock Text="Cross-Platform High-Performance Media Backup &amp; Integrity Verification"
+                           FontSize="12" Foreground="#94A3B8"/>
+            </StackPanel>
+
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                <Button Content="Export HTML" Command="{Binding ExportReportCommand}" CommandParameter="html"
+                        Background="#1E293B" Foreground="#E2E8F0" BorderBrush="#334155" Padding="12,6"/>
+                <Button Content="Export CSV" Command="{Binding ExportReportCommand}" CommandParameter="csv"
+                        Background="#1E293B" Foreground="#E2E8F0" BorderBrush="#334155" Padding="12,6"/>
+                <Button Content="Export JSON" Command="{Binding ExportReportCommand}" CommandParameter="json"
+                        Background="#1E293B" Foreground="#E2E8F0" BorderBrush="#334155" Padding="12,6"/>
+            </StackPanel>
+        </Grid>
+
+        <!-- 2. Hero Safety Banner, Summary Metrics & Sleek Glassmorphic Progress Hub -->
+        <StackPanel Grid.Row="1" Spacing="12" Margin="0,0,0,16">
+            <!-- Hero Badge -->
+            <Border Background="{Binding SafetyBadgeColor}" CornerRadius="8" Padding="16">
+                <Grid ColumnDefinitions="*,Auto">
+                    <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding SafetyBadgeText}" FontSize="18" FontWeight="Bold" Foreground="#FFFFFF"/>
+                        <TextBlock Text="{Binding StatusMessage}" FontSize="13" Foreground="#FFFFFF" Opacity="0.9" Margin="0,4,0,0"/>
+                    </StackPanel>
+                    <TextBlock Grid.Column="1" Text="{Binding DurationFormatted}" FontSize="16" FontWeight="SemiBold"
+                               Foreground="#FFFFFF" VerticalAlignment="Center"/>
+                </Grid>
+            </Border>
+
+            <!-- Metrics Strip -->
+            <Grid ColumnDefinitions="*,*,*,*,*,*,*">
+                <Border Grid.Column="0" Background="#111827" BorderBrush="#1F2937" BorderThickness="1" CornerRadius="6" Padding="12,8" Margin="0,0,4,0">
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="TOTAL FILES" FontSize="10" Foreground="#64748B" FontWeight="Bold"/>
+                        <TextBlock Text="{Binding TotalFiles}" FontSize="18" FontWeight="Bold" Foreground="#F8FAFC"/>
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Column="1" Background="#111827" BorderBrush="#1F2937" BorderThickness="1" CornerRadius="6" Padding="12,8" Margin="4,0,4,0">
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="TOTAL SIZE" FontSize="10" Foreground="#64748B" FontWeight="Bold"/>
+                        <TextBlock Text="{Binding TotalSizeFormatted}" FontSize="18" FontWeight="Bold" Foreground="#38BDF8"/>
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Column="2" Background="#111827" BorderBrush="#1F2937" BorderThickness="1" CornerRadius="6" Padding="12,8" Margin="4,0,4,0">
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="VERIFIED" FontSize="10" Foreground="#64748B" FontWeight="Bold"/>
+                        <TextBlock Text="{Binding VerifiedCount}" FontSize="18" FontWeight="Bold" Foreground="#10B981"/>
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Column="3" Background="#111827" BorderBrush="#1F2937" BorderThickness="1" CornerRadius="6" Padding="12,8" Margin="4,0,4,0">
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="MISSING" FontSize="10" Foreground="#64748B" FontWeight="Bold"/>
+                        <TextBlock Text="{Binding MissingCount}" FontSize="18" FontWeight="Bold" Foreground="#F43F5E"/>
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Column="4" Background="#111827" BorderBrush="#1F2937" BorderThickness="1" CornerRadius="6" Padding="12,8" Margin="4,0,4,0">
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="CORRUPTED" FontSize="10" Foreground="#64748B" FontWeight="Bold"/>
+                        <TextBlock Text="{Binding CorruptCount}" FontSize="18" FontWeight="Bold" Foreground="#F59E0B"/>
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Column="5" Background="#111827" BorderBrush="#1F2937" BorderThickness="1" CornerRadius="6" Padding="12,8" Margin="4,0,4,0">
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="RECLAIMABLE" FontSize="10" Foreground="#64748B" FontWeight="Bold"/>
+                        <TextBlock Text="{Binding ReclaimableSpaceFormatted}" FontSize="18" FontWeight="Bold" Foreground="#F59E0B"/>
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Column="6" Background="#111827" BorderBrush="#1F2937" BorderThickness="1" CornerRadius="6" Padding="12,8" Margin="4,0,0,0">
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="SCAN MODE" FontSize="10" Foreground="#64748B" FontWeight="Bold"/>
+                        <TextBlock Text="{Binding DisplayedScanMode}" FontSize="16" FontWeight="Bold" Foreground="#A855F7"/>
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+            <!-- Sleek Glassmorphic Progress Hub (Always in layout, shows Idle or Active states) -->
+            <Border Background="#131B2E"
+                    BorderBrush="{Binding OperationAccentColor}"
+                    BorderThickness="1.5"
+                    CornerRadius="10"
+                    Padding="16,14">
+                <StackPanel Spacing="12">
+                    <!-- 1. Header & Quick Actions -->
+                    <Grid ColumnDefinitions="Auto,*,Auto">
+                        <!-- Left Badges -->
+                        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                            <Border Background="#1E293B" CornerRadius="6" Padding="8,4">
+                                <TextBlock Text="{Binding OperationTitle}" FontSize="11" FontWeight="Bold" Foreground="{Binding OperationAccentColor}"/>
+                            </Border>
+                            <Border Background="{Binding StateBadgeBackground}" CornerRadius="6" Padding="8,4">
+                                <TextBlock Text="{Binding StateBadgeText}" FontSize="11" FontWeight="Bold" Foreground="{Binding StateBadgeForeground}"/>
+                            </Border>
+                        </StackPanel>
+
+                        <!-- Middle Active Phase Details -->
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="16,0" Spacing="2">
+                            <TextBlock Text="{Binding CurrentProgressPhase}" FontSize="13" FontWeight="SemiBold" Foreground="#F8FAFC" TextTrimming="CharacterEllipsis"/>
+                            <TextBlock Text="{Binding CurrentFileDetailText}" FontSize="11" Foreground="#94A3B8" TextTrimming="CharacterEllipsis"/>
+                        </StackPanel>
+
+                        <!-- Right Actions (Pause/Resume & Cancel) -->
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" IsVisible="{Binding !ShowCancelConfirmation}">
+                            <Button Content="{Binding PauseResumeButtonText}"
+                                    Command="{Binding RequestPauseResumeCommand}"
+                                    IsEnabled="{Binding CanPauseResume}"
+                                    Background="{Binding PauseResumeButtonBackground}"
+                                    Foreground="#FFFFFF"
+                                    FontWeight="Bold"
+                                    Padding="14,6"
+                                    FontSize="11"/>
+                            <Button Content="⏹ CANCEL"
+                                    Command="{Binding RequestCancelCommand}"
+                                    IsEnabled="{Binding IsOperationActive}"
+                                    Background="#1E293B"
+                                    BorderBrush="#EF4444"
+                                    BorderThickness="1"
+                                    Foreground="#EF4444"
+                                    FontWeight="Bold"
+                                    Padding="14,6"
+                                    FontSize="11"/>
+                        </StackPanel>
+                    </Grid>
+
+                    <!-- 2. Inline Cancellation Confirmation Alert Strip -->
+                    <Border IsVisible="{Binding ShowCancelConfirmation}"
+                            Background="#2A1218"
+                            BorderBrush="#EF4444"
+                            BorderThickness="1"
+                            CornerRadius="6"
+                            Padding="12,8">
+                        <Grid ColumnDefinitions="*,Auto,Auto">
+                            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                <TextBlock Text="⚠️ Cancel active operation?" FontWeight="Bold" Foreground="#FECDD3" FontSize="12" VerticalAlignment="Center"/>
+                                <TextBlock Text="Any partial file transfer will be safely removed." Foreground="#FDA4AF" FontSize="11" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            <Button Grid.Column="1" Content="Yes, Cancel" Command="{Binding ConfirmCancelCommand}"
+                                    Background="#EF4444" Foreground="#FFFFFF" FontWeight="Bold" Padding="12,5" FontSize="11" Margin="0,0,8,0"/>
+                            <Button Grid.Column="2" Content="Keep Running" Command="{Binding DismissCancelCommand}"
+                                    Background="#334155" Foreground="#F8FAFC" FontWeight="Bold" Padding="12,5" FontSize="11"/>
+                        </Grid>
+                    </Border>
+
+                    <!-- 3. Dual Progress Bars -->
+                    <StackPanel Spacing="8">
+                        <!-- Batch Progress Bar -->
+                        <StackPanel Spacing="3">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Grid.Column="0" Text="Batch Progress" FontSize="11" FontWeight="Bold" Foreground="#94A3B8"/>
+                                <TextBlock Grid.Column="1" Text="{Binding BatchProgressSummaryText}" FontSize="11" FontWeight="SemiBold" Foreground="#F8FAFC"/>
+                            </Grid>
+                            <ProgressBar Value="{Binding BatchProgressPercentage}"
+                                         IsIndeterminate="{Binding IsBatchIndeterminate}"
+                                         Maximum="100" Height="8" CornerRadius="4"
+                                         Foreground="{Binding OperationAccentColor}" Background="#1E293B"/>
+                        </StackPanel>
+
+                        <!-- Current File Progress Bar -->
+                        <StackPanel Spacing="3">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Grid.Column="0" Text="{Binding CurrentFileLabelText}" FontSize="10" Foreground="#64748B" TextTrimming="CharacterEllipsis"/>
+                                <TextBlock Grid.Column="1" Text="{Binding CurrentFileProgressText}" FontSize="10" Foreground="#94A3B8"/>
+                            </Grid>
+                            <ProgressBar Value="{Binding CurrentFileProgressPercentage}" Maximum="100" Height="5" CornerRadius="3"
+                                         Foreground="#38BDF8" Background="#1E293B"/>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <!-- 4. Live Telemetry Strip -->
+                    <Grid ColumnDefinitions="*,*,*,*">
+                        <Border Grid.Column="0" Background="#111827" CornerRadius="4" Padding="10,6" Margin="0,0,4,0">
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="THROUGHPUT" FontSize="9" FontWeight="Bold" Foreground="#64748B"/>
+                                <TextBlock Text="{Binding ThroughputText}" FontSize="13" FontWeight="Bold" Foreground="#F8FAFC"/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Column="1" Background="#111827" CornerRadius="4" Padding="10,6" Margin="4,0,4,0">
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="ELAPSED TIME" FontSize="9" FontWeight="Bold" Foreground="#64748B"/>
+                                <TextBlock Text="{Binding DurationFormatted}" FontSize="13" FontWeight="Bold" Foreground="#F8FAFC"/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Column="2" Background="#111827" CornerRadius="4" Padding="10,6" Margin="4,0,4,0">
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="EST. REMAINING" FontSize="9" FontWeight="Bold" Foreground="#64748B"/>
+                                <TextBlock Text="{Binding EtaText}" FontSize="13" FontWeight="Bold" Foreground="#F8FAFC"/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Column="3" Background="#111827" CornerRadius="4" Padding="10,6" Margin="4,0,0,0">
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="FILES PROCESSED" FontSize="9" FontWeight="Bold" Foreground="#64748B"/>
+                                <TextBlock Text="{Binding FilesCounterText}" FontSize="13" FontWeight="Bold" Foreground="#F8FAFC"/>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+
+        <!-- 3. Main Workspace: Left Controls Panel & Right Media Grid -->
+        <Grid Grid.Row="2" ColumnDefinitions="360,16,*">
+            <!-- Left Controls Panel -->
+            <Border Grid.Column="0" Background="#111827" BorderBrush="#1F2937" BorderThickness="1" CornerRadius="8" Padding="16">
+                <ScrollViewer>
+                    <StackPanel Spacing="16">
+                        <!-- Source Card Section -->
+                        <StackPanel Spacing="6" IsEnabled="{Binding CanStartOperation}">
+                            <TextBlock Text="SOURCE STORAGE (CARD / FOLDER)" FontSize="11" FontWeight="Bold" Foreground="#64748B"/>
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBox Grid.Column="0" Text="{Binding SourcePath, Mode=TwoWay}" PlaceholderText="Path to SD card or folder..."
+                                         Background="#1E293B" Foreground="#F8FAFC" BorderBrush="#334155"/>
+                                <Button Grid.Column="1" Content="Browse" Click="OnBrowseSourceClicked"
+                                         Background="#334155" Foreground="#F8FAFC" Margin="6,0,0,0"/>
+                            </Grid>
+                        </StackPanel>
+
+                        <!-- Destinations Section -->
+                        <StackPanel Spacing="6" IsEnabled="{Binding CanStartOperation}">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Grid.Column="0" Text="BACKUP DESTINATIONS" FontSize="11" FontWeight="Bold" Foreground="#64748B" VerticalAlignment="Center"/>
+                                <Button Grid.Column="1" Content="+ Add Dest" Click="OnAddDestinationClicked"
+                                        Background="#1E293B" Foreground="#38BDF8" BorderBrush="#334155" Padding="8,4" FontSize="11"/>
+                            </Grid>
+
+                            <ItemsControl ItemsSource="{Binding Destinations}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:BackupDestinationViewModel">
+                                        <Border Background="#1E293B" CornerRadius="6" Padding="10,6" Margin="0,0,0,6" BorderBrush="#334155" BorderThickness="1">
+                                            <Grid ColumnDefinitions="Auto,*,Auto">
+                                                <CheckBox Grid.Column="0" IsChecked="{Binding IsEnabled}" Margin="0,0,8,0"/>
+                                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="13" Foreground="#F8FAFC"/>
+                                                    <TextBlock Text="{Binding RootPath}" FontSize="11" Foreground="#94A3B8" TextTrimming="CharacterEllipsis"/>
+                                                </StackPanel>
+                                                <Button Grid.Column="2" Content="✕"
+                                                        Command="{Binding $parent[Window].((vm:MainViewModel)DataContext).RemoveDestinationCommand}"
+                                                        CommandParameter="{Binding}"
+                                                        Background="Transparent" Foreground="#EF4444" FontSize="12" Padding="4"/>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+
+                        <!-- Verification Mode -->
+                        <StackPanel Spacing="6" IsEnabled="{Binding CanStartOperation}">
+                            <TextBlock Text="VERIFICATION MODE" FontSize="11" FontWeight="Bold" Foreground="#64748B"/>
+                            <StackPanel Spacing="8">
+                                <RadioButton Content="Super-Fast (Metadata + Size only)"
+                                             IsChecked="{Binding SelectedMode, Converter={x:Static conv:EnumToBooleanConverter.Instance}, ConverterParameter={x:Static core:VerificationMode.SuperFast}}"
+                                             GroupName="ModeGroup" Foreground="#E2E8F0"/>
+                                <RadioButton Content="Quick (Metadata + 64KB Head/Tail Hash)"
+                                             IsChecked="{Binding SelectedMode, Converter={x:Static conv:EnumToBooleanConverter.Instance}, ConverterParameter={x:Static core:VerificationMode.Quick}}"
+                                             GroupName="ModeGroup" Foreground="#E2E8F0"/>
+                                <RadioButton Content="Full (Bit-for-Bit Sequential Hash)"
+                                             IsChecked="{Binding SelectedMode, Converter={x:Static conv:EnumToBooleanConverter.Instance}, ConverterParameter={x:Static core:VerificationMode.Full}}"
+                                             GroupName="ModeGroup" Foreground="#E2E8F0"/>
+                            </StackPanel>
+                        </StackPanel>
+
+                        <!-- Filter Preset -->
+                        <StackPanel Spacing="6" IsEnabled="{Binding CanStartOperation}">
+                            <TextBlock Text="MEDIA FILTER PRESET" FontSize="11" FontWeight="Bold" Foreground="#64748B"/>
+                            <ComboBox ItemsSource="{Binding FilterPresets}" SelectedItem="{Binding SelectedPreset}"
+                                      HorizontalAlignment="Stretch" Background="#1E293B" Foreground="#F8FAFC" BorderBrush="#334155">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate x:DataType="models:FilterPreset">
+                                        <TextBlock Text="{Binding Name}"/>
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+                        </StackPanel>
+
+                        <!-- Additional Options -->
+                        <StackPanel Spacing="6" IsEnabled="{Binding CanStartOperation}">
+                            <TextBlock Text="ADDITIONAL OPTIONS" FontSize="11" FontWeight="Bold" Foreground="#64748B"/>
+                            <CheckBox Content="Scan for duplicates during verification"
+                                      IsChecked="{Binding ScanDuplicatesDuringVerification}"
+                                      Foreground="#E2E8F0" FontSize="12"/>
+                        </StackPanel>
+
+                        <!-- Actions -->
+                        <StackPanel Spacing="10" Margin="0,10,0,0">
+                            <Button Content="VERIFY BACKUPS" Command="{Binding VerifyCommand}"
+                                    IsEnabled="{Binding CanStartOperation}"
+                                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                    Background="#2563EB" Foreground="#FFFFFF" FontWeight="Bold" Padding="14"/>
+
+                            <Button Content="SCAN FOR DUPLICATES" Command="{Binding ScanDuplicatesCommand}"
+                                    IsEnabled="{Binding CanStartOperation}"
+                                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                    Background="#0F766E" Foreground="#FFFFFF" FontWeight="Bold" Padding="12"/>
+
+                            <Button Content="COPY MISSING TO BACKUP" Command="{Binding CopyMissingCommand}"
+                                    IsVisible="{Binding HasMissingFiles}" IsEnabled="{Binding CanStartCopy}"
+                                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                    Background="#D97706" Foreground="#FFFFFF" FontWeight="Bold" Padding="14"/>
+
+                            <!-- Sidebar Operation Controls (Pause/Resume and Cancel) -->
+                            <Grid ColumnDefinitions="*,*" Margin="0,2,0,0">
+                                <Button Grid.Column="0" Content="{Binding PauseResumeButtonText}" Command="{Binding RequestPauseResumeCommand}"
+                                        IsEnabled="{Binding CanPauseResume}"
+                                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                        Background="{Binding PauseResumeButtonBackground}" Foreground="#FFFFFF" FontWeight="Bold" Padding="10" Margin="0,0,4,0"/>
+                                <Button Grid.Column="1" Content="⏹ CANCEL" Command="{Binding RequestCancelCommand}"
+                                        IsEnabled="{Binding IsOperationActive}"
+                                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                        Background="#EF4444" Foreground="#FFFFFF" FontWeight="Bold" Padding="10" Margin="4,0,0,0"/>
+                            </Grid>
+                        </StackPanel>
+                    </StackPanel>
+                </ScrollViewer>
+            </Border>
+
+            <!-- Right Media Grid Panel -->
+            <Border Grid.Column="2" Background="#111827" BorderBrush="#1F2937" BorderThickness="1" CornerRadius="8" Padding="16">
+                <Grid RowDefinitions="Auto,*">
+                    <!-- Filter Tabs & Search -->
+                    <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto" Margin="0,0,0,12">
+                        <!-- Filter Tabs -->
+                        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="4">
+                            <Button Content="All" Command="{Binding SetActiveTabCommand}" CommandParameter="All"
+                                    Background="{Binding ActiveTab, Converter={x:Static ObjectConverters.Equal}, ConverterParameter=All, Mode=OneWay}"
+                                    Foreground="#F8FAFC" Padding="10,6" FontSize="12"/>
+                            <Button Content="Verified" Command="{Binding SetActiveTabCommand}" CommandParameter="Verified"
+                                    Foreground="#34D399" Padding="10,6" FontSize="12"/>
+                            <Button Content="Missing" Command="{Binding SetActiveTabCommand}" CommandParameter="Missing"
+                                    Foreground="#FB7185" Padding="10,6" FontSize="12"/>
+                            <Button Content="Corrupt" Command="{Binding SetActiveTabCommand}" CommandParameter="Corrupt"
+                                    Foreground="#FBBF24" Padding="10,6" FontSize="12"/>
+                            <Button Command="{Binding SetActiveTabCommand}" CommandParameter="Duplicates"
+                                    Foreground="#F59E0B" Padding="10,6" FontSize="12">
+                                <StackPanel Orientation="Horizontal" Spacing="5">
+                                    <TextBlock Text="Duplicates"/>
+                                    <Border Background="#78350F" CornerRadius="6" Padding="4,1" Margin="2,0,0,0" IsVisible="{Binding HasDuplicates}">
+                                        <TextBlock Text="{Binding DuplicateFilesCount}" FontSize="10" Foreground="#FBBF24" FontWeight="Bold"/>
+                                    </Border>
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+
+                        <!-- Search Box -->
+                        <TextBox Grid.Column="2" Text="{Binding SearchText, Mode=TwoWay}" PlaceholderText="Search files..." Width="220"
+                                 Background="#1E293B" Foreground="#F8FAFC" BorderBrush="#334155"/>
+                    </Grid>
+
+                    <!-- Media Grid (Visible when not on Duplicates Tab) -->
+                    <DataGrid Grid.Row="1" ItemsSource="{Binding FilteredItems}" AutoGenerateColumns="False"
+                              IsReadOnly="True" GridLinesVisibility="Horizontal" HeadersVisibility="Column"
+                              Background="#0B0F17" BorderBrush="#1F2937" BorderThickness="1"
+                              IsVisible="{Binding !IsDuplicatesTabActive}">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="File" Binding="{Binding FileName}" Width="2*"/>
+                            <DataGridTextColumn Header="Format" Binding="{Binding Extension}" Width="80"/>
+                            <DataGridTextColumn Header="Size" Binding="{Binding SizeFormatted}" Width="100"/>
+                            <DataGridTemplateColumn Header="Status" Width="120">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate x:DataType="vm:MediaItemViewModel">
+                                        <Border Background="{Binding StatusBadgeColor}" CornerRadius="4" Padding="6,2" HorizontalAlignment="Left">
+                                            <TextBlock Text="{Binding StatusText}" Foreground="#FFFFFF" FontSize="11" FontWeight="Bold"/>
+                                        </Border>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Destinations" Binding="{Binding DestinationSummary}" Width="3*"/>
+                            <DataGridTextColumn Header="Relative Path" Binding="{Binding RelativePath}" Width="3*"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <!-- Duplicates Explorer View (Visible on Duplicates Tab) -->
+                    <Grid Grid.Row="1" RowDefinitions="Auto,*" IsVisible="{Binding IsDuplicatesTabActive}">
+                        <!-- Duplicates Summary Header Strip -->
+                        <Border Grid.Row="0" Background="#1E293B" BorderBrush="#334155" BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,10">
+                            <Grid ColumnDefinitions="*,*,*,*">
+                                <StackPanel Grid.Column="0" Spacing="2">
+                                    <TextBlock Text="DUPLICATE GROUPS" FontSize="10" Foreground="#94A3B8" FontWeight="Bold"/>
+                                    <TextBlock Text="{Binding FilteredDuplicateGroups.Count}" FontSize="15" FontWeight="Bold" Foreground="#F8FAFC"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Spacing="2">
+                                    <TextBlock Text="DUPLICATE COPIES" FontSize="10" Foreground="#94A3B8" FontWeight="Bold"/>
+                                    <TextBlock Text="{Binding DuplicateFilesCount}" FontSize="15" FontWeight="Bold" Foreground="#F59E0B"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="2" Spacing="2">
+                                    <TextBlock Text="POTENTIAL SPACE SAVED" FontSize="10" Foreground="#94A3B8" FontWeight="Bold"/>
+                                    <TextBlock Text="{Binding ReclaimableSpaceFormatted}" FontSize="15" FontWeight="Bold" Foreground="#10B981"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="3" Spacing="2">
+                                    <TextBlock Text="MULTI-DRIVE REDUNDANT" FontSize="10" Foreground="#94A3B8" FontWeight="Bold"/>
+                                    <TextBlock Text="{Binding CrossDestinationRedundantCount}" FontSize="15" FontWeight="Bold" Foreground="#38BDF8"/>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <!-- Grouped Duplicate Items List -->
+                        <ScrollViewer Grid.Row="1">
+                            <StackPanel Spacing="10">
+                                <!-- Empty state when no duplicates -->
+                                <Border Background="#111827" BorderBrush="#1F2937" BorderThickness="1" CornerRadius="8" Padding="24"
+                                        IsVisible="{Binding !HasDuplicates}" HorizontalAlignment="Stretch">
+                                    <StackPanel Spacing="8" HorizontalAlignment="Center">
+                                        <TextBlock Text="✓ No duplicate files detected" FontSize="16" FontWeight="Bold" Foreground="#10B981" HorizontalAlignment="Center"/>
+                                        <TextBlock Text="All verified destination files have unique content with zero redundant copies." FontSize="12" Foreground="#94A3B8" HorizontalAlignment="Center"/>
+                                    </StackPanel>
+                                </Border>
+
+                                <!-- Items List -->
+                                <ItemsControl ItemsSource="{Binding FilteredDuplicateGroups}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:DuplicateGroupViewModel">
+                                            <Border Background="#1E293B" BorderBrush="#334155" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
+                                                <StackPanel Spacing="10">
+                                                    <!-- Group Header Bar -->
+                                                    <Grid ColumnDefinitions="*,Auto">
+                                                        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                                            <TextBlock Text="{Binding FileName}" FontSize="14" FontWeight="Bold" Foreground="#F8FAFC" VerticalAlignment="Center"/>
+                                                            <TextBlock Text="{Binding FileSizeFormatted}" FontSize="12" Foreground="#94A3B8" VerticalAlignment="Center"/>
+                                                            <Border Background="{Binding RedundancyBadgeBackground}" CornerRadius="4" Padding="6,2" VerticalAlignment="Center">
+                                                                <TextBlock Text="{Binding RedundancyBadgeText}" FontSize="10" FontWeight="Bold" Foreground="{Binding RedundancyBadgeForeground}"/>
+                                                            </Border>
+                                                        </StackPanel>
+
+                                                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                                            <TextBlock Text="Reclaimable Space:" FontSize="11" Foreground="#94A3B8" VerticalAlignment="Center"/>
+                                                            <TextBlock Text="{Binding ReclaimableBytesFormatted}" FontSize="13" FontWeight="Bold" Foreground="#F59E0B" VerticalAlignment="Center"/>
+                                                        </StackPanel>
+                                                    </Grid>
+
+                                                    <!-- Nested Duplicate Locations -->
+                                                    <ItemsControl ItemsSource="{Binding Files}">
+                                                        <ItemsControl.ItemTemplate>
+                                                            <DataTemplate x:DataType="vm:DuplicateFileItemViewModel">
+                                                                <Border Background="#111827" CornerRadius="6" Padding="10,6" Margin="0,0,0,6" BorderBrush="#1F2937" BorderThickness="1">
+                                                                    <Grid ColumnDefinitions="Auto,Auto,*,Auto">
+                                                                        <Border Grid.Column="0" Background="{Binding StatusBadgeBackground}" CornerRadius="4" Padding="6,2" Margin="0,0,8,0" VerticalAlignment="Center">
+                                                                            <TextBlock Text="{Binding StatusBadgeText}" FontSize="10" FontWeight="Bold" Foreground="{Binding StatusBadgeForeground}"/>
+                                                                        </Border>
+                                                                        <Border Grid.Column="1" Background="#1E293B" CornerRadius="4" Padding="6,2" Margin="0,0,8,0" VerticalAlignment="Center">
+                                                                            <TextBlock Text="{Binding DestinationName}" FontSize="11" FontWeight="SemiBold" Foreground="#38BDF8"/>
+                                                                        </Border>
+                                                                        <TextBlock Grid.Column="2" Text="{Binding RelativePath}" FontSize="11" Foreground="#E2E8F0"
+                                                                                   VerticalAlignment="Center" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding FullPath}"/>
+                                                                        <Button Grid.Column="3" Content="Reveal in Folder" Command="{Binding RevealInFolderCommand}"
+                                                                                Background="#334155" Foreground="#F8FAFC" FontSize="10" Padding="8,4" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                                                                    </Grid>
+                                                                </Border>
+                                                            </DataTemplate>
+                                                        </ItemsControl.ItemTemplate>
+                                                    </ItemsControl>
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Grid>
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</Window>

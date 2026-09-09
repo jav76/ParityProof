@@ -1,0 +1,214 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release Tag (e.g. v1.0.0, v1.0.0-rc.1)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  prepare-release:
+    name: Prepare Release Metadata
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version_meta.outputs.tag }}
+      version: ${{ steps.version_meta.outputs.version }}
+      is_prerelease: ${{ steps.version_meta.outputs.is_prerelease }}
+      commit_sha: ${{ steps.version_meta.outputs.commit_sha }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract Version Metadata
+        id: version_meta
+        run: |
+          RAW_TAG="${{ github.event.inputs.tag_name || github.ref_name }}"
+          VERSION="${RAW_TAG#v}"
+          COMMIT_SHA="${{ github.sha }}"
+
+          IS_PRERELEASE="false"
+          if [[ "$VERSION" == *"-"* ]]; then
+            IS_PRERELEASE="true"
+          fi
+
+          echo "tag=$RAW_TAG" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "is_prerelease=$IS_PRERELEASE" >> $GITHUB_OUTPUT
+          echo "commit_sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
+
+          echo "Tag: $RAW_TAG"
+          echo "Version: $VERSION"
+          echo "Is Prerelease: $IS_PRERELEASE"
+          echo "Commit SHA: $COMMIT_SHA"
+
+  build-native-aot:
+    name: Build Native AOT (${{ matrix.target }})
+    needs: prepare-release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux builds
+          - target: linux-x64
+            os: ubuntu-latest
+            rid: linux-x64
+            arch: x64
+            msvc_arch: ''
+            platform_family: linux
+          - target: linux-arm64
+            os: ubuntu-24.04-arm
+            rid: linux-arm64
+            arch: arm64
+            msvc_arch: ''
+            platform_family: linux
+
+          # Windows builds
+          - target: win-x64
+            os: windows-latest
+            rid: win-x64
+            arch: x64
+            msvc_arch: amd64
+            platform_family: windows
+          - target: win-arm64
+            os: windows-latest
+            rid: win-arm64
+            arch: arm64
+            msvc_arch: amd64_arm64
+            platform_family: windows
+          - target: win-x86
+            os: windows-latest
+            rid: win-x86
+            arch: x86
+            msvc_arch: amd64_x86
+            platform_family: windows
+
+          # macOS builds
+          - target: osx-arm64
+            os: macos-14
+            rid: osx-arm64
+            arch: arm64
+            msvc_arch: ''
+            platform_family: macos
+          - target: osx-x64
+            os: macos-13
+            rid: osx-x64
+            arch: x64
+            msvc_arch: ''
+            platform_family: macos
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Install Linux Build Dependencies
+        if: matrix.platform_family == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang zlib1g-dev
+
+      - name: Configure MSVC Environment (Windows)
+        if: matrix.platform_family == 'windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.msvc_arch }}
+
+      - name: Compile & Publish Native AOT
+        run: |
+          dotnet publish src/ParityProof.App/ParityProof.App.csproj \
+            --configuration Release \
+            -r ${{ matrix.rid }} \
+            -p:PublishAot=true \
+            -p:Version="${{ needs.prepare-release.outputs.version }}" \
+            -p:SourceRevisionId="${{ needs.prepare-release.outputs.commit_sha }}" \
+            -o ./publish
+
+      - name: Package Linux Artifacts (.tar.gz & .deb)
+        if: matrix.platform_family == 'linux'
+        run: |
+          mkdir -p ./dist
+          # Create compressed archive
+          tar -czf "./dist/ParityProof-v${{ needs.prepare-release.outputs.version }}-${{ matrix.target }}.tar.gz" -C ./publish .
+
+          # Create Debian package
+          chmod +x packaging/linux/build-deb.sh
+          ./packaging/linux/build-deb.sh ./publish "${{ needs.prepare-release.outputs.version }}" "${{ matrix.arch }}" ./dist
+
+      - name: Package macOS Artifacts (.tar.gz & .dmg)
+        if: matrix.platform_family == 'macos'
+        run: |
+          mkdir -p ./dist
+          # Create compressed archive
+          tar -czf "./dist/ParityProof-v${{ needs.prepare-release.outputs.version }}-${{ matrix.target }}.tar.gz" -C ./publish .
+
+          # Create Apple disk image (.dmg)
+          chmod +x packaging/macos/build-dmg.sh
+          ./packaging/macos/build-dmg.sh ./publish "${{ needs.prepare-release.outputs.version }}" "${{ matrix.arch }}" ./dist
+
+      - name: Package Windows Artifacts (.zip & .msi)
+        if: matrix.platform_family == 'windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path ./dist -Force | Out-Null
+
+          # Create compressed archive
+          Compress-Archive -Path ./publish/* -DestinationPath "./dist/ParityProof-v${{ needs.prepare-release.outputs.version }}-${{ matrix.target }}.zip"
+
+          # Create WiX MSI installer
+          & ./packaging/windows/build-msi.ps1 `
+            -PublishDir ./publish `
+            -Version "${{ needs.prepare-release.outputs.version }}" `
+            -Arch "${{ matrix.arch }}" `
+            -OutputDir ./dist
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: parityproof-${{ matrix.target }}
+          path: ./dist/*
+          retention-days: 1
+
+  create-release:
+    name: Publish GitHub Release & Checksums
+    needs: [ prepare-release, build-native-aot ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: parityproof-*
+          merge-multiple: true
+          path: ./dist
+
+      - name: Generate SHA256 Checksums Manifest
+        run: |
+          cd ./dist
+          sha256sum * > ../checksums-sha256.txt
+          mv ../checksums-sha256.txt ./checksums-sha256.txt
+          echo "=== Computed SHA256 Checksums ==="
+          cat ./checksums-sha256.txt
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare-release.outputs.tag }}
+          name: ParityProof ${{ needs.prepare-release.outputs.tag }}
+          prerelease: ${{ needs.prepare-release.outputs.is_prerelease == 'true' }}
+          generate_release_notes: true
+          files: ./dist/*

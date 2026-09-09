@@ -1,0 +1,17 @@
+<Project>
+  <PropertyGroup>
+    <Company>ParityProof</Company>
+    <Product>ParityProof</Product>
+    <Copyright>Copyright © 2026 ParityProof Contributors</Copyright>
+    <Authors>ParityProof Contributors</Authors>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/jarett/ParityProof</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+
+    <!-- Deterministic fallback version for local builds -->
+    <Version Condition="'$(Version)' == ''">1.0.0-dev</Version>
+    <AssemblyVersion Condition="'$(AssemblyVersion)' == ''">$(Version.Split('-')[0])</AssemblyVersion>
+    <FileVersion Condition="'$(FileVersion)' == ''">$(AssemblyVersion)</FileVersion>
+    <InformationalVersion Condition="'$(InformationalVersion)' == ''">$(Version)</InformationalVersion>
+  </PropertyGroup>
+</Project>

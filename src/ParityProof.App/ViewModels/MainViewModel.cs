@@ -1,0 +1,1134 @@
+using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Avalonia.Threading;
+using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
+using ParityProof.Core.Enums;
+using ParityProof.Core.Interfaces;
+using ParityProof.Core.Models;
+using ParityProof.Core.Threading;
+using ParityProof.Engine.Cache;
+using ParityProof.Engine.IO;
+using ParityProof.Engine.Matching;
+using ParityProof.Engine.Reporting;
+using ParityProof.Engine.Transfer;
+using ParityProof.Platform;
+
+namespace ParityProof.App.ViewModels;
+
+public sealed partial class MainViewModel : ViewModelBase, IDisposable
+{
+    private const string COLOR_SAFE = "#10B981"; // Emerald
+    private const string COLOR_PARTIAL = "#F59E0B"; // Amber
+    private const string COLOR_UNSAFE = "#F43F5E"; // Rose
+    private const string COLOR_IDLE = "#3B82F6"; // Blue
+
+    private readonly IVerificationEngine _verificationEngine;
+    private readonly IMediaCopier _mediaCopier;
+    private readonly IDriveDetector _driveDetector;
+    private readonly SqliteIndexCache _indexCache;
+    private readonly IDuplicateAnalyzer _duplicateAnalyzer;
+    private readonly Stopwatch _operationStopwatch = new();
+    private readonly DispatcherTimer _elapsedTimer;
+
+    private CancellationTokenSource? _cts;
+    private PauseTokenSource? _pauseTokenSource;
+    private VerificationSummary? _lastSummary;
+    private IReadOnlyList<VerificationResultItem> _lastResults = Array.Empty<VerificationResultItem>();
+
+    [ObservableProperty]
+    private string _sourcePath = string.Empty;
+
+    [ObservableProperty]
+    private ObservableCollection<BackupDestinationViewModel> _destinations = new();
+
+    [ObservableProperty]
+    private VerificationMode _selectedMode = VerificationMode.Quick;
+
+    [ObservableProperty]
+    private string _displayedScanMode = "Quick";
+
+    partial void OnSelectedModeChanged(VerificationMode value)
+    {
+        if (!HasResults)
+        {
+            DisplayedScanMode = FormatScanMode(value);
+        }
+    }
+
+    [ObservableProperty]
+    private bool _scanDuplicatesDuringVerification;
+
+    [ObservableProperty]
+    private ObservableCollection<FilterPreset> _filterPresets = new()
+    {
+        FilterPreset.PhotosOnly,
+        FilterPreset.PhotosAndVideos,
+        FilterPreset.AllCameraMediaWithSidecars
+    };
+
+    [ObservableProperty]
+    private FilterPreset _selectedPreset;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanStartOperation))]
+    [NotifyPropertyChangedFor(nameof(CanStartCopy))]
+    private bool _isRunning;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanStartOperation))]
+    [NotifyPropertyChangedFor(nameof(CanStartCopy))]
+    private bool _isCopying;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanStartOperation))]
+    [NotifyPropertyChangedFor(nameof(CanStartCopy))]
+    private bool _isOperationActive;
+
+    [ObservableProperty]
+    private bool _isPausing;
+
+    [ObservableProperty]
+    private bool _isPaused;
+
+    [ObservableProperty]
+    private bool _isCancelling;
+
+    [ObservableProperty]
+    private bool _showCancelConfirmation;
+
+    [ObservableProperty]
+    private string _operationTitle = "OPERATION STATUS";
+
+    [ObservableProperty]
+    private string _operationAccentColor = "#3B82F6";
+
+    [ObservableProperty]
+    private string _stateBadgeText = "IDLE";
+
+    [ObservableProperty]
+    private string _stateBadgeBackground = "#1E293B";
+
+    [ObservableProperty]
+    private string _stateBadgeForeground = "#94A3B8";
+
+    [ObservableProperty]
+    private string _currentFileDetailText = "No active background operation.";
+
+    [ObservableProperty]
+    private double _batchProgressPercentage;
+
+    [ObservableProperty]
+    private bool _isBatchIndeterminate;
+
+    [ObservableProperty]
+    private string _batchProgressSummaryText = "Waiting for operation...";
+
+    [ObservableProperty]
+    private double _currentFileProgressPercentage;
+
+    [ObservableProperty]
+    private string _currentFileLabelText = "Current File";
+
+    [ObservableProperty]
+    private string _currentFileProgressText = string.Empty;
+
+    [ObservableProperty]
+    private string _throughputText = "0.0 MB/s";
+
+    [ObservableProperty]
+    private string _etaText = "--:--";
+
+    [ObservableProperty]
+    private string _filesCounterText = "0 files";
+
+    [ObservableProperty]
+    private string _pauseResumeButtonText = "⏸ PAUSE";
+
+    [ObservableProperty]
+    private string _pauseResumeButtonBackground = "#334155";
+
+    [ObservableProperty]
+    private bool _canPauseResume;
+
+    [ObservableProperty]
+    private string _statusMessage = "Ready. Select an SD card or directory to verify.";
+
+    [ObservableProperty]
+    private string _currentProgressPhase = "Ready. Select an SD card or directory to verify.";
+
+    [ObservableProperty]
+    private double _progressPercentage;
+
+    [ObservableProperty]
+    private string _safetyBadgeText = "READY FOR VERIFICATION";
+
+    [ObservableProperty]
+    private string _safetyBadgeColor = COLOR_IDLE;
+
+    [ObservableProperty]
+    private int _totalFiles;
+
+    [ObservableProperty]
+    private string _totalSizeFormatted = "0.0 GB";
+
+    [ObservableProperty]
+    private int _verifiedCount;
+
+    [ObservableProperty]
+    private int _missingCount;
+
+    [ObservableProperty]
+    private int _corruptCount;
+
+    [ObservableProperty]
+    private string _durationFormatted = "--:--";
+
+    [ObservableProperty]
+    private string _searchText = string.Empty;
+
+    [ObservableProperty]
+    private string _activeTab = "All";
+
+    [ObservableProperty]
+    private bool _isDuplicatesTabActive;
+
+    [ObservableProperty]
+    private bool _hasResults;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanStartCopy))]
+    private bool _hasMissingFiles;
+
+    [ObservableProperty]
+    private string _reclaimableSpaceFormatted = "0 B";
+
+    [ObservableProperty]
+    private int _duplicateFilesCount;
+
+    [ObservableProperty]
+    private int _crossDestinationRedundantCount;
+
+    [ObservableProperty]
+    private bool _hasDuplicates;
+
+    [ObservableProperty]
+    private string _copyProgressText = string.Empty;
+
+    [ObservableProperty]
+    private double _copyProgressPercentage;
+
+    [ObservableProperty]
+    private string _copySpeedText = string.Empty;
+
+    [ObservableProperty]
+    private string _copyEtaText = string.Empty;
+
+    public bool CanStartOperation => !IsOperationActive;
+    public bool CanStartCopy => HasMissingFiles && !IsOperationActive;
+
+    public ObservableCollection<MediaItemViewModel> AllItems { get; } = new();
+    public ObservableCollection<MediaItemViewModel> FilteredItems { get; } = new();
+    public ObservableCollection<DuplicateGroupViewModel> AllDuplicateGroups { get; } = new();
+    public ObservableCollection<DuplicateGroupViewModel> FilteredDuplicateGroups { get; } = new();
+
+    public MainViewModel()
+    {
+        _selectedPreset = FilterPresets[0];
+
+        _indexCache = new SqliteIndexCache();
+        _duplicateAnalyzer = new DuplicateAnalyzer(_indexCache);
+        _verificationEngine = new MultiDestinationVerifier(_indexCache, _duplicateAnalyzer);
+        _mediaCopier = new MediaCopier();
+
+        _driveDetector = DriveDetectorFactory.Create();
+        _driveDetector.DriveChanged += OnDriveChanged;
+        _driveDetector.Start();
+
+        _elapsedTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(500)
+        };
+        _elapsedTimer.Tick += OnElapsedTimerTick;
+    }
+
+    private void OnElapsedTimerTick(object? sender, EventArgs e)
+    {
+        if (!IsPaused && _operationStopwatch.IsRunning)
+        {
+            DurationFormatted = $"{_operationStopwatch.Elapsed.TotalSeconds:F1}s";
+        }
+    }
+
+    private void OnDriveChanged(object? sender, DriveNotificationEventArgs e)
+    {
+        if (e.EventType == DriveEventType.Inserted)
+        {
+            if (string.IsNullOrEmpty(SourcePath))
+            {
+                SourcePath = e.DrivePath;
+            }
+            StatusMessage = $"Removable media detected: {e.VolumeLabel} ({e.DrivePath})";
+        }
+        else if (e.EventType == DriveEventType.Removed)
+        {
+            StatusMessage = $"Drive removed: {e.DrivePath}";
+            if (string.Equals(SourcePath, e.DrivePath, StringComparison.OrdinalIgnoreCase))
+            {
+                SourcePath = string.Empty;
+            }
+        }
+    }
+
+    partial void OnSearchTextChanged(string value)
+    {
+        ApplyFilter();
+    }
+
+    partial void OnActiveTabChanged(string value)
+    {
+        IsDuplicatesTabActive = string.Equals(value, "Duplicates", StringComparison.OrdinalIgnoreCase);
+        ApplyFilter();
+    }
+
+    private void ApplyFilter()
+    {
+        FilteredItems.Clear();
+        FilteredDuplicateGroups.Clear();
+        string filter = SearchText.Trim();
+
+        foreach (MediaItemViewModel item in AllItems)
+        {
+            bool matchesTab = ActiveTab switch
+            {
+                "Verified" => item.IsVerified,
+                "Missing" => item.IsMissing,
+                "Corrupt" => item.IsCorrupt,
+                _ => true
+            };
+
+            if (!matchesTab)
+            {
+                continue;
+            }
+
+            if (!string.IsNullOrEmpty(filter) &&
+                !item.RelativePath.Contains(filter, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            FilteredItems.Add(item);
+        }
+
+        foreach (DuplicateGroupViewModel group in AllDuplicateGroups)
+        {
+            if (string.IsNullOrEmpty(filter) ||
+                group.FileName.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
+                group.Files.Any(f => f.RelativePath.Contains(filter, StringComparison.OrdinalIgnoreCase)))
+            {
+                FilteredDuplicateGroups.Add(group);
+            }
+        }
+    }
+
+    [RelayCommand]
+    private void SetActiveTab(string tabName)
+    {
+        ActiveTab = tabName;
+    }
+
+    [RelayCommand]
+    private void AddDestination(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        string trimmed = path.Trim();
+        string id = "dest_" + (Destinations.Count + 1);
+        string name = Path.GetFileName(trimmed.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        if (string.IsNullOrEmpty(name))
+        {
+            name = trimmed;
+        }
+
+        Destinations.Add(new BackupDestinationViewModel(id, name, trimmed));
+    }
+
+    [RelayCommand]
+    private void RemoveDestination(BackupDestinationViewModel dest)
+    {
+        Destinations.Remove(dest);
+    }
+
+    [RelayCommand]
+    private void RequestPauseResume()
+    {
+        if (_pauseTokenSource is null)
+        {
+            return;
+        }
+
+        if (!IsPaused && !IsPausing)
+        {
+            IsPausing = true;
+            CanPauseResume = false;
+            PauseResumeButtonText = "⏳ PAUSING...";
+            StateBadgeText = "PAUSING...";
+            StateBadgeBackground = "#78350F";
+            StateBadgeForeground = "#FBBF24";
+            StatusMessage = "Pausing operation...";
+            _pauseTokenSource.Pause();
+            _operationStopwatch.Stop();
+        }
+        else if (IsPaused)
+        {
+            IsPaused = false;
+            IsPausing = false;
+            CanPauseResume = true;
+            PauseResumeButtonText = "⏸ PAUSE";
+            PauseResumeButtonBackground = "#D97706";
+            StateBadgeText = "RUNNING";
+            StateBadgeBackground = "#064E3B";
+            StateBadgeForeground = "#10B981";
+            StatusMessage = "Operation resumed.";
+            _operationStopwatch.Start();
+            _pauseTokenSource.Resume();
+        }
+    }
+
+    [RelayCommand]
+    private void RequestCancel()
+    {
+        if (!IsOperationActive)
+        {
+            return;
+        }
+
+        ShowCancelConfirmation = true;
+    }
+
+    [RelayCommand]
+    private void ConfirmCancel()
+    {
+        ShowCancelConfirmation = false;
+        IsCancelling = true;
+        CanPauseResume = false;
+        StateBadgeText = "CANCELLING...";
+        StateBadgeBackground = "#7F1D1D";
+        StateBadgeForeground = "#F87171";
+        StatusMessage = "Cancelling operation and cleaning up...";
+
+        _pauseTokenSource?.Resume();
+        _cts?.Cancel();
+    }
+
+    [RelayCommand]
+    private void DismissCancel()
+    {
+        ShowCancelConfirmation = false;
+    }
+
+    [RelayCommand]
+    private void Cancel()
+    {
+        RequestCancel();
+    }
+
+    [RelayCommand]
+    private async Task VerifyAsync()
+    {
+        string trimmedSource = SourcePath?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(trimmedSource) || !Directory.Exists(trimmedSource))
+        {
+            StatusMessage = string.IsNullOrWhiteSpace(trimmedSource)
+                ? "Please select a valid source directory."
+                : $"Source directory not found: {trimmedSource}";
+            return;
+        }
+
+        if (Destinations.Count == 0)
+        {
+            StatusMessage = "Please add at least one backup destination.";
+            return;
+        }
+
+        SourcePath = trimmedSource;
+
+        IsRunning = true;
+        IsOperationActive = true;
+        IsBatchIndeterminate = true;
+        IsPausing = false;
+        IsPaused = false;
+        IsCancelling = false;
+        ShowCancelConfirmation = false;
+        CanPauseResume = true;
+        OperationTitle = "MEDIA VERIFICATION";
+        OperationAccentColor = "#38BDF8";
+        DisplayedScanMode = FormatScanMode(SelectedMode);
+        StateBadgeText = "RUNNING";
+        StateBadgeBackground = "#064E3B";
+        StateBadgeForeground = "#10B981";
+        PauseResumeButtonText = "⏸ PAUSE";
+        PauseResumeButtonBackground = "#D97706";
+        BatchProgressPercentage = 0;
+        BatchProgressSummaryText = "Scanning directory...";
+        CurrentFileProgressPercentage = 0;
+        ThroughputText = "0.0 MB/s";
+        EtaText = "--:--";
+        FilesCounterText = "0 found";
+        CurrentProgressPhase = "Scanning Source Directory...";
+        CurrentFileDetailText = "Traversing file tree...";
+
+        _cts = new CancellationTokenSource();
+        _pauseTokenSource = new PauseTokenSource();
+        _operationStopwatch.Restart();
+        _elapsedTimer.Start();
+
+        try
+        {
+            List<BackupDestination> destinationModels = Destinations
+                .Where(d => d.IsEnabled)
+                .Select(d => d.ToModel())
+                .ToList();
+
+            Progress<VerificationProgress> progress = new(p =>
+            {
+                CurrentProgressPhase = p.Phase;
+                if (p.IsPaused)
+                {
+                    IsPausing = false;
+                    IsPaused = true;
+                    CanPauseResume = true;
+                    IsBatchIndeterminate = false;
+                    PauseResumeButtonText = "▶ RESUME";
+                    PauseResumeButtonBackground = "#059669";
+                    StateBadgeText = "PAUSED";
+                    StateBadgeBackground = "#78350F";
+                    StateBadgeForeground = "#FBBF24";
+                    StatusMessage = "Operation paused.";
+                }
+                else if (!IsPausing && !IsCancelling)
+                {
+                    StateBadgeText = "RUNNING";
+                    StateBadgeBackground = "#064E3B";
+                    StateBadgeForeground = "#10B981";
+                }
+
+                if (p.TotalFiles > 0)
+                {
+                    IsBatchIndeterminate = false;
+                    BatchProgressPercentage = (p.ProcessedFiles / (double)p.TotalFiles) * 100.0;
+                    ProgressPercentage = BatchProgressPercentage;
+                    BatchProgressSummaryText = $"{BatchProgressPercentage:F0}% ({p.ProcessedFiles} / {p.TotalFiles})";
+                    FilesCounterText = $"{p.ProcessedFiles} / {p.TotalFiles}";
+                }
+                else
+                {
+                    IsBatchIndeterminate = !p.IsPaused;
+                    BatchProgressPercentage = 0;
+                    BatchProgressSummaryText = p.ProcessedBytes > 0
+                        ? $"Scanning: {p.ProcessedFiles} files ({FormatBytes(p.ProcessedBytes)})"
+                        : $"Scanning: {p.ProcessedFiles} files";
+                    FilesCounterText = $"{p.ProcessedFiles} found";
+                }
+
+                if (!string.IsNullOrEmpty(p.CurrentFile))
+                {
+                    CurrentFileDetailText = p.TotalFiles == 0 ? $"Traversing: {p.CurrentFile}" : p.CurrentFile;
+                    CurrentFileLabelText = Path.GetFileName(p.CurrentFile);
+                    if (string.IsNullOrEmpty(CurrentFileLabelText))
+                    {
+                        CurrentFileLabelText = p.CurrentFile;
+                    }
+                }
+
+                if (p.CurrentFileBytes > 0)
+                {
+                    CurrentFileProgressPercentage = Math.Min(100.0, (p.CurrentFileProcessedBytes / (double)p.CurrentFileBytes) * 100.0);
+                    CurrentFileProgressText = $"{FormatBytes(p.CurrentFileProcessedBytes)} / {FormatBytes(p.CurrentFileBytes)}";
+                }
+                else
+                {
+                    CurrentFileProgressPercentage = 0;
+                    CurrentFileProgressText = string.Empty;
+                }
+
+                if (p.MegaBytesPerSecond > 0)
+                {
+                    ThroughputText = $"{p.MegaBytesPerSecond:F1} MB/s";
+                }
+                else if (p.ScanRateFilesPerSecond > 0)
+                {
+                    ThroughputText = $"{p.ScanRateFilesPerSecond:N0} files/s";
+                }
+                else
+                {
+                    ThroughputText = "-- MB/s";
+                }
+
+                if (p.EstimatedTimeRemaining > TimeSpan.Zero)
+                {
+                    EtaText = $"{p.EstimatedTimeRemaining:mm\\:ss}";
+                }
+                else
+                {
+                    EtaText = "--:--";
+                }
+            });
+
+            // Offload to background thread pool to ensure UI Dispatcher never blocks during I/O
+            (VerificationSummary summary, IReadOnlyList<VerificationResultItem> results) =
+                await Task.Run(() => _verificationEngine.VerifyAsync(
+                    trimmedSource,
+                    destinationModels,
+                    SelectedMode,
+                    SelectedPreset,
+                    progress,
+                    _cts.Token,
+                    _pauseTokenSource.Token,
+                    scanDuplicates: ScanDuplicatesDuringVerification)).ConfigureAwait(true);
+
+            _lastSummary = summary;
+            _lastResults = results;
+
+            TotalFiles = summary.TotalFiles;
+            TotalSizeFormatted = $"{(summary.TotalBytes / (1024.0 * 1024.0 * 1024.0)):F2} GB";
+            VerifiedCount = summary.FullyVerifiedFiles;
+            MissingCount = summary.MissingFiles;
+            CorruptCount = summary.CorruptFiles;
+            DurationFormatted = $"{summary.Duration.TotalSeconds:F1}s";
+            DisplayedScanMode = FormatScanMode(summary.Mode);
+
+            SafetyBadgeText = summary.SafetyStatus switch
+            {
+                OverallSafetyStatus.SafeToFormat => "SAFE TO FORMAT - 100% BACKED UP",
+                OverallSafetyStatus.PartiallyBackedUp => "PARTIALLY BACKED UP - ACTION REQUIRED",
+                _ => "UNSAFE TO FORMAT - MISSING FILES"
+            };
+
+            SafetyBadgeColor = summary.SafetyStatus switch
+            {
+                OverallSafetyStatus.SafeToFormat => COLOR_SAFE,
+                OverallSafetyStatus.PartiallyBackedUp => COLOR_PARTIAL,
+                _ => COLOR_UNSAFE
+            };
+
+            AllItems.Clear();
+            foreach (VerificationResultItem item in results)
+            {
+                AllItems.Add(new MediaItemViewModel(item));
+            }
+
+            AllDuplicateGroups.Clear();
+            if (summary.DuplicateAnalysis is not null)
+            {
+                DuplicateFilesCount = summary.DuplicateAnalysis.TotalDuplicateCopies;
+                ReclaimableSpaceFormatted = FormatBytes(summary.DuplicateAnalysis.TotalReclaimableBytes);
+                CrossDestinationRedundantCount = summary.DuplicateAnalysis.CrossDestinationRedundantFileCount;
+                HasDuplicates = summary.DuplicateAnalysis.Groups.Count > 0;
+
+                foreach (DuplicateGroup group in summary.DuplicateAnalysis.Groups)
+                {
+                    AllDuplicateGroups.Add(new DuplicateGroupViewModel(group));
+                }
+            }
+            else
+            {
+                DuplicateFilesCount = 0;
+                ReclaimableSpaceFormatted = "0 B";
+                CrossDestinationRedundantCount = 0;
+                HasDuplicates = false;
+            }
+
+            HasResults = true;
+            HasMissingFiles = summary.MissingFiles > 0;
+            StatusMessage = $"Verification complete: {VerifiedCount} verified, {MissingCount} missing in {DurationFormatted}.";
+
+            OperationTitle = "VERIFICATION COMPLETE";
+            OperationAccentColor = summary.SafetyStatus switch
+            {
+                OverallSafetyStatus.SafeToFormat => COLOR_SAFE,
+                OverallSafetyStatus.PartiallyBackedUp => COLOR_PARTIAL,
+                _ => COLOR_UNSAFE
+            };
+            StateBadgeText = "FINISHED";
+            StateBadgeBackground = "#064E3B";
+            StateBadgeForeground = "#10B981";
+            CurrentProgressPhase = StatusMessage;
+            BatchProgressPercentage = 100.0;
+            BatchProgressSummaryText = $"100% ({summary.TotalFiles} / {summary.TotalFiles})";
+
+            ApplyFilter();
+        }
+        catch (OperationCanceledException)
+        {
+            StatusMessage = "Verification cancelled by user.";
+            CurrentProgressPhase = "Cancelled.";
+            StateBadgeText = "CANCELLED";
+            StateBadgeBackground = "#7F1D1D";
+            StateBadgeForeground = "#F87171";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Error: {ex.Message}";
+            StateBadgeText = "ERROR";
+            StateBadgeBackground = "#7F1D1D";
+            StateBadgeForeground = "#F87171";
+        }
+        finally
+        {
+            _elapsedTimer.Stop();
+            _operationStopwatch.Stop();
+            DurationFormatted = $"{_operationStopwatch.Elapsed.TotalSeconds:F1}s";
+            IsRunning = false;
+            IsOperationActive = false;
+            IsBatchIndeterminate = false;
+            IsPausing = false;
+            IsPaused = false;
+            IsCancelling = false;
+            ShowCancelConfirmation = false;
+            CanPauseResume = false;
+            PauseResumeButtonText = "⏸ PAUSE";
+            PauseResumeButtonBackground = "#334155";
+        }
+    }
+
+    [RelayCommand]
+    private async Task ScanDuplicatesAsync()
+    {
+        string trimmedSource = SourcePath?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(trimmedSource) || !Directory.Exists(trimmedSource))
+        {
+            StatusMessage = string.IsNullOrWhiteSpace(trimmedSource)
+                ? "Please select a valid source directory to scan for duplicates."
+                : $"Source directory not found: {trimmedSource}";
+            return;
+        }
+
+        if (Destinations.Count == 0)
+        {
+            StatusMessage = "Please add at least one backup destination to scan for duplicates.";
+            return;
+        }
+
+        List<BackupDestination> destinationModels = Destinations
+            .Where(d => d.IsEnabled)
+            .Select(d => d.ToModel())
+            .ToList();
+
+        if (destinationModels.Count == 0)
+        {
+            StatusMessage = "Please enable at least one backup destination.";
+            return;
+        }
+
+        IsRunning = true;
+        IsOperationActive = true;
+        IsBatchIndeterminate = true;
+        IsPausing = false;
+        IsPaused = false;
+        IsCancelling = false;
+        ShowCancelConfirmation = false;
+        CanPauseResume = true;
+        OperationTitle = "DUPLICATE STORAGE AUDIT";
+        OperationAccentColor = "#F59E0B";
+        DisplayedScanMode = FormatScanMode(SelectedMode);
+        StateBadgeText = "SCANNING";
+        StateBadgeBackground = "#78350F";
+        StateBadgeForeground = "#FBBF24";
+        PauseResumeButtonText = "⏸ PAUSE";
+        PauseResumeButtonBackground = "#D97706";
+        BatchProgressPercentage = 0;
+        BatchProgressSummaryText = "Scanning destinations...";
+        CurrentFileProgressPercentage = 0;
+        ThroughputText = "-- MB/s";
+        EtaText = "--:--";
+        FilesCounterText = "0 files";
+        CurrentProgressPhase = "Scanning Destination Directories...";
+        CurrentFileDetailText = "Traversing destination file trees...";
+
+        _cts = new CancellationTokenSource();
+        _pauseTokenSource = new PauseTokenSource();
+        _operationStopwatch.Restart();
+        _elapsedTimer.Start();
+
+        try
+        {
+            Progress<VerificationProgress> progress = new(p =>
+            {
+                CurrentProgressPhase = p.Phase;
+                if (!string.IsNullOrEmpty(p.CurrentFile))
+                {
+                    CurrentFileDetailText = p.CurrentFile;
+                    CurrentFileLabelText = Path.GetFileName(p.CurrentFile);
+                }
+
+                if (p.TotalFiles > 0)
+                {
+                    IsBatchIndeterminate = false;
+                    BatchProgressPercentage = (p.ProcessedFiles / (double)p.TotalFiles) * 100.0;
+                    BatchProgressSummaryText = $"{BatchProgressPercentage:F0}% ({p.ProcessedFiles} / {p.TotalFiles})";
+                    FilesCounterText = $"{p.ProcessedFiles} / {p.TotalFiles}";
+                }
+                else
+                {
+                    IsBatchIndeterminate = !p.IsPaused;
+                    BatchProgressPercentage = 0;
+                    BatchProgressSummaryText = p.ProcessedBytes > 0
+                        ? $"Scanning: {p.ProcessedFiles} files ({FormatBytes(p.ProcessedBytes)})"
+                        : $"Scanning: {p.ProcessedFiles} files";
+                    FilesCounterText = $"{p.ProcessedFiles} found";
+                }
+
+                if (p.CurrentFileBytes > 0)
+                {
+                    CurrentFileProgressPercentage = Math.Min(100.0, (p.CurrentFileProcessedBytes / (double)p.CurrentFileBytes) * 100.0);
+                    CurrentFileProgressText = $"{FormatBytes(p.CurrentFileProcessedBytes)} / {FormatBytes(p.CurrentFileBytes)}";
+                }
+                else
+                {
+                    CurrentFileProgressPercentage = 0;
+                    CurrentFileProgressText = string.Empty;
+                }
+
+                if (p.MegaBytesPerSecond > 0)
+                {
+                    ThroughputText = $"{p.MegaBytesPerSecond:F1} MB/s";
+                }
+                else if (p.ScanRateFilesPerSecond > 0)
+                {
+                    ThroughputText = $"{p.ScanRateFilesPerSecond:N0} files/s";
+                }
+                else
+                {
+                    ThroughputText = "-- MB/s";
+                }
+
+                if (p.EstimatedTimeRemaining > TimeSpan.Zero)
+                {
+                    EtaText = $"{p.EstimatedTimeRemaining:mm\\:ss}";
+                }
+                else
+                {
+                    EtaText = "--:--";
+                }
+            });
+
+            DuplicateAnalysisResult result = await Task.Run(async () =>
+            {
+                _cts.Token.ThrowIfCancellationRequested();
+                IReadOnlyList<MediaFile> sourceFiles = await FastDirectoryScanner.ScanDirectoryAsync(
+                    trimmedSource,
+                    SelectedPreset,
+                    phaseName: "Scanning Source Directory...",
+                    referenceTotalFiles: 0,
+                    referenceTotalBytes: 0,
+                    progress: progress,
+                    cancellationToken: _cts.Token,
+                    pauseToken: _pauseTokenSource.Token).ConfigureAwait(false);
+
+                if (sourceFiles.Count == 0)
+                {
+                    return DuplicateAnalysisResult.Empty;
+                }
+
+                Dictionary<string, IReadOnlyList<MediaFile>> destinationFiles = new();
+                foreach (BackupDestination dest in destinationModels)
+                {
+                    _cts.Token.ThrowIfCancellationRequested();
+                    IReadOnlyList<MediaFile> files = await FastDirectoryScanner.ScanDirectoryAsync(
+                        dest.RootPath,
+                        SelectedPreset,
+                        phaseName: $"Indexing: {dest.Name}",
+                        referenceTotalFiles: 0,
+                        referenceTotalBytes: 0,
+                        progress: progress,
+                        cancellationToken: _cts.Token,
+                        pauseToken: _pauseTokenSource.Token).ConfigureAwait(false);
+
+                    destinationFiles[dest.Id] = files;
+                }
+
+                return await _duplicateAnalyzer.AnalyzeDuplicatesAsync(
+                    sourceFiles,
+                    destinationModels,
+                    destinationFiles,
+                    SelectedMode,
+                    progress,
+                    _cts.Token,
+                    _pauseTokenSource.Token).ConfigureAwait(false);
+            }).ConfigureAwait(true);
+
+            DuplicateFilesCount = result.TotalDuplicateCopies;
+            ReclaimableSpaceFormatted = FormatBytes(result.TotalReclaimableBytes);
+            CrossDestinationRedundantCount = result.CrossDestinationRedundantFileCount;
+            HasDuplicates = result.Groups.Count > 0;
+            DisplayedScanMode = FormatScanMode(SelectedMode);
+
+            AllDuplicateGroups.Clear();
+            foreach (DuplicateGroup group in result.Groups)
+            {
+                AllDuplicateGroups.Add(new DuplicateGroupViewModel(group));
+            }
+
+            ActiveTab = "Duplicates";
+            ApplyFilter();
+
+            StatusMessage = $"Duplicate scan complete: {result.TotalDuplicateCopies} duplicates found. {ReclaimableSpaceFormatted} reclaimable.";
+            StateBadgeText = "FINISHED";
+            StateBadgeBackground = "#064E3B";
+            StateBadgeForeground = "#10B981";
+            CurrentProgressPhase = StatusMessage;
+            BatchProgressPercentage = 100;
+            BatchProgressSummaryText = $"{result.Groups.Count} duplicate groups found";
+        }
+        catch (OperationCanceledException)
+        {
+            StatusMessage = "Duplicate scan cancelled by user.";
+            CurrentProgressPhase = "Cancelled.";
+            StateBadgeText = "CANCELLED";
+            StateBadgeBackground = "#7F1D1D";
+            StateBadgeForeground = "#F87171";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Duplicate scan error: {ex.Message}";
+            StateBadgeText = "ERROR";
+            StateBadgeBackground = "#7F1D1D";
+            StateBadgeForeground = "#F87171";
+        }
+        finally
+        {
+            _elapsedTimer.Stop();
+            _operationStopwatch.Stop();
+            DurationFormatted = $"{_operationStopwatch.Elapsed.TotalSeconds:F1}s";
+            IsRunning = false;
+            IsOperationActive = false;
+            IsBatchIndeterminate = false;
+            IsPausing = false;
+            IsPaused = false;
+            IsCancelling = false;
+            ShowCancelConfirmation = false;
+            CanPauseResume = false;
+            PauseResumeButtonText = "⏸ PAUSE";
+            PauseResumeButtonBackground = "#334155";
+        }
+    }
+
+    [RelayCommand]
+    private async Task CopyMissingAsync()
+    {
+        if (_lastSummary is null || _lastResults.Count == 0 || Destinations.Count == 0)
+        {
+            return;
+        }
+
+        BackupDestinationViewModel? primaryDest = Destinations.FirstOrDefault(d => d.IsEnabled);
+        if (primaryDest is null)
+        {
+            StatusMessage = "No active destination to copy to.";
+            return;
+        }
+
+        List<MediaFile> missingFiles = _lastResults
+            .Where(r => !r.IsFullyVerified)
+            .Select(r => r.SourceFile)
+            .ToList();
+
+        if (missingFiles.Count == 0)
+        {
+            StatusMessage = "No missing files to copy.";
+            return;
+        }
+
+        IsCopying = true;
+        IsOperationActive = true;
+        IsBatchIndeterminate = false;
+        IsPausing = false;
+        IsPaused = false;
+        IsCancelling = false;
+        ShowCancelConfirmation = false;
+        CanPauseResume = true;
+        OperationTitle = "BACKUP COPY TRANSFER";
+        OperationAccentColor = "#F59E0B";
+        StateBadgeText = "RUNNING";
+        StateBadgeBackground = "#064E3B";
+        StateBadgeForeground = "#10B981";
+        PauseResumeButtonText = "⏸ PAUSE";
+        PauseResumeButtonBackground = "#D97706";
+        BatchProgressPercentage = 0;
+        BatchProgressSummaryText = "0% (0 / 0)";
+        CurrentFileProgressPercentage = 0;
+        ThroughputText = "0.0 MB/s";
+        EtaText = "--:--";
+        FilesCounterText = $"0 / {missingFiles.Count}";
+        CurrentProgressPhase = "Starting copy transfer...";
+        CurrentFileDetailText = "Preparing file streams...";
+
+        _cts = new CancellationTokenSource();
+        _pauseTokenSource = new PauseTokenSource();
+        _operationStopwatch.Restart();
+        _elapsedTimer.Start();
+
+        bool copySucceeded = false;
+        try
+        {
+            Progress<CopyProgressInfo> copyProgress = new(p =>
+            {
+                if (p.IsPaused)
+                {
+                    IsPausing = false;
+                    IsPaused = true;
+                    CanPauseResume = true;
+                    PauseResumeButtonText = "▶ RESUME";
+                    PauseResumeButtonBackground = "#059669";
+                    StateBadgeText = "PAUSED";
+                    StateBadgeBackground = "#78350F";
+                    StateBadgeForeground = "#FBBF24";
+                    StatusMessage = "Copy paused at file boundary.";
+                }
+                else if (!IsPausing && !IsCancelling)
+                {
+                    StateBadgeText = "RUNNING";
+                    StateBadgeBackground = "#064E3B";
+                    StateBadgeForeground = "#10B981";
+                }
+
+                CurrentProgressPhase = $"Copying: {p.CurrentFileName}";
+                CurrentFileDetailText = p.CurrentFileName;
+                CurrentFileLabelText = Path.GetFileName(p.CurrentFileName);
+                CopyProgressText = $"Copying ({p.FilesCompleted}/{p.TotalFiles}): {p.CurrentFileName}";
+
+                if (p.TotalBytes > 0)
+                {
+                    BatchProgressPercentage = (p.CopiedBytes / (double)p.TotalBytes) * 100.0;
+                    CopyProgressPercentage = BatchProgressPercentage;
+                    BatchProgressSummaryText = $"{BatchProgressPercentage:F0}% ({FormatBytes(p.CopiedBytes)} / {FormatBytes(p.TotalBytes)})";
+                }
+
+                if (p.CurrentFileBytes > 0)
+                {
+                    CurrentFileProgressPercentage = Math.Min(100.0, (p.CurrentFileCopiedBytes / (double)p.CurrentFileBytes) * 100.0);
+                    CurrentFileProgressText = $"{FormatBytes(p.CurrentFileCopiedBytes)} / {FormatBytes(p.CurrentFileBytes)}";
+                }
+                else
+                {
+                    CurrentFileProgressPercentage = 0;
+                    CurrentFileProgressText = string.Empty;
+                }
+
+                FilesCounterText = $"{p.FilesCompleted} / {p.TotalFiles}";
+                CopySpeedText = $"{p.MegaBytesPerSecond:F1} MB/s";
+                ThroughputText = CopySpeedText;
+
+                CopyEtaText = $"ETA: {p.EstimatedTimeRemaining:mm\\:ss}";
+                EtaText = $"{p.EstimatedTimeRemaining:mm\\:ss}";
+            });
+
+            // Offload to background thread pool to ensure UI Dispatcher never blocks during file transfer
+            int copiedCount = await Task.Run(() => _mediaCopier.CopyMissingFilesAsync(
+                missingFiles,
+                primaryDest.RootPath,
+                copyProgress,
+                _cts.Token,
+                _pauseTokenSource.Token)).ConfigureAwait(true);
+
+            copySucceeded = true;
+            StatusMessage = $"Copied and verified {copiedCount} files. Re-running verification...";
+        }
+        catch (OperationCanceledException)
+        {
+            StatusMessage = "File copy cancelled by user.";
+            CurrentProgressPhase = "Cancelled.";
+            StateBadgeText = "CANCELLED";
+            StateBadgeBackground = "#7F1D1D";
+            StateBadgeForeground = "#F87171";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Copy error: {ex.Message}";
+            StateBadgeText = "ERROR";
+            StateBadgeBackground = "#7F1D1D";
+            StateBadgeForeground = "#F87171";
+        }
+        finally
+        {
+            _elapsedTimer.Stop();
+            _operationStopwatch.Stop();
+            IsCopying = false;
+            IsOperationActive = false;
+            IsPausing = false;
+            IsPaused = false;
+            IsCancelling = false;
+            ShowCancelConfirmation = false;
+            CanPauseResume = false;
+            PauseResumeButtonText = "⏸ PAUSE";
+            PauseResumeButtonBackground = "#334155";
+        }
+
+        if (copySucceeded)
+        {
+            await VerifyAsync();
+        }
+    }
+
+    [RelayCommand]
+    private async Task ExportReportAsync(string format)
+    {
+        if (_lastSummary is null || _lastResults.Count == 0)
+        {
+            StatusMessage = "No verification results available to export.";
+            return;
+        }
+
+        IReportGenerator generator = format.ToLowerInvariant() switch
+        {
+            "csv" => new CsvReportGenerator(),
+            "json" => new JsonReportGenerator(),
+            _ => new HtmlReportGenerator()
+        };
+
+        string docsDir = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        string fileName = $"ParityProof_Report_{DateTime.UtcNow:yyyyMMdd_HHmmss}{generator.FileExtension}";
+        string outputPath = Path.Combine(docsDir, fileName);
+
+        await generator.GenerateReportAsync(_lastSummary, _lastResults, outputPath);
+        StatusMessage = $"Audit report exported to: {outputPath}";
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        return bytes switch
+        {
+            >= 1024L * 1024 * 1024 => $"{(bytes / (1024.0 * 1024 * 1024)):F2} GB",
+            >= 1024L * 1024 => $"{(bytes / (1024.0 * 1024)):F1} MB",
+            >= 1024L => $"{(bytes / 1024.0):F0} KB",
+            _ => $"{bytes} B"
+        };
+    }
+
+    public static string FormatScanMode(VerificationMode mode) => mode switch
+    {
+        VerificationMode.SuperFast => "Super-Fast",
+        VerificationMode.Quick => "Quick",
+        VerificationMode.Full => "Full",
+        _ => mode.ToString()
+    };
+
+    public void Dispose()
+    {
+        _elapsedTimer.Stop();
+        _driveDetector.DriveChanged -= OnDriveChanged;
+        _driveDetector.Dispose();
+        _cts?.Dispose();
+    }
+}

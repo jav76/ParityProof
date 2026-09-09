@@ -1,0 +1,42 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="ParityProof"
+           Manufacturer="ParityProof Contributors"
+           Version="$(var.Version)"
+           UpgradeCode="E4F7C812-3D8B-4B39-9B21-0B6E7D1A54F1">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of ParityProof is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="ParityProof" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ApplicationProgramsFolder" Name="ParityProof" />
+    </StandardDirectory>
+
+    <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
+      <Files Include="$(var.PublishDir)\**">
+        <Exclude Files="$(var.PublishDir)\*.pdb" />
+      </Files>
+    </ComponentGroup>
+
+    <Feature Id="MainFeature" Title="ParityProof Application" Level="1">
+      <ComponentGroupRef Id="ProductComponents" />
+      <Component Directory="ApplicationProgramsFolder">
+        <Shortcut Id="ApplicationStartMenuShortcut"
+                  Name="ParityProof"
+                  Description="Pro Media Ingest and Backup Verification"
+                  Target="[!ParityProof.App.exe]"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <RemoveFolder Id="CleanUpShortCut" Directory="ApplicationProgramsFolder" On="uninstall" />
+        <RegistryValue Root="HKCU"
+                       Key="Software\ParityProof"
+                       Name="installed"
+                       Type="integer"
+                       Value="1"
+                       KeyPath="yes" />
+      </Component>
+    </Feature>
+  </Package>
+</Wix>

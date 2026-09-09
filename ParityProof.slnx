@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ParityProof.App/ParityProof.App.csproj" />
+    <Project Path="src/ParityProof.Core/ParityProof.Core.csproj" />
+    <Project Path="src/ParityProof.Engine/ParityProof.Engine.csproj" />
+    <Project Path="src/ParityProof.Platform/ParityProof.Platform.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ParityProof.Engine.Tests/ParityProof.Engine.Tests.csproj" />
+  </Folder>
+</Solution>

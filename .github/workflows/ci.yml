@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Run Unit Tests & Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore solution dependencies
+        run: dotnet restore ParityProof.slnx
+
+      - name: Build solution in Release mode
+        run: dotnet build ParityProof.slnx --configuration Release --no-restore
+
+      - name: Execute unit test suite
+        run: dotnet test ParityProof.slnx --configuration Release --no-build --verbosity normal --collect:"XPlat Code Coverage"
+
+  check-format:
+    name: Verify Code Formatting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Check code formatting
+        run: dotnet format ParityProof.slnx --verify-no-changes --severity warn
+
+  cross-platform-build-check:
+    name: Build Check (${{ matrix.rid }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: windows-latest
+            rid: win-x64
+          - os: macos-latest
+            rid: osx-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Verify build for ${{ matrix.rid }}
+        run: dotnet build src/ParityProof.App/ParityProof.App.csproj --configuration Release

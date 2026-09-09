@@ -1,0 +1,35 @@
+## Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+## Visual Studio / Rider / VSCode
+.vs/
+.idea/
+*.user
+*.userosscache
+*.suo
+*.userprefs
+
+## NativeAOT Publish artifacts
+publish/
+dist/
+checksums-sha256.txt
+
+## SQLite Local Databases & Logs
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
