@@ -117,8 +117,9 @@ jobs:
       - name: Install Linux Build Dependencies
         if: matrix.platform_family == 'linux'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y clang zlib1g-dev
+          sudo rm -f /etc/apt/sources.list.d/*chrome* || true
+          sudo apt-get update -o Acquire::Retries=3 || true
+          sudo apt-get install -y --no-install-recommends clang zlib1g-dev
 
       - name: Configure MSVC Environment (Windows)
         if: matrix.platform_family == 'windows'
@@ -126,7 +127,8 @@ jobs:
         with:
           arch: ${{ matrix.msvc_arch }}
 
-      - name: Compile & Publish Native AOT
+      - name: Compile & Publish Native AOT (Linux & macOS)
+        if: matrix.platform_family != 'windows'
         run: |
           dotnet publish src/ParityProof.App/ParityProof.App.csproj \
             --configuration Release \
@@ -134,6 +136,18 @@ jobs:
             -p:PublishAot=true \
             -p:Version="${{ needs.prepare-release.outputs.version }}" \
             -p:SourceRevisionId="${{ needs.prepare-release.outputs.commit_sha }}" \
+            -o ./publish
+
+      - name: Compile & Publish Native AOT (Windows)
+        if: matrix.platform_family == 'windows'
+        shell: pwsh
+        run: |
+          dotnet publish src/ParityProof.App/ParityProof.App.csproj `
+            --configuration Release `
+            -r ${{ matrix.rid }} `
+            -p:PublishAot=true `
+            -p:Version="${{ needs.prepare-release.outputs.version }}" `
+            -p:SourceRevisionId="${{ needs.prepare-release.outputs.commit_sha }}" `
             -o ./publish
 
       - name: Package Linux Artifacts (.tar.gz & .deb)

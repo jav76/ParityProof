@@ -12,6 +12,9 @@ if (-not (Test-Path $OutputDir)) {
     New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 }
 
+$OutputDir = [System.IO.Path]::GetFullPath($OutputDir)
+$PublishDir = (Resolve-Path $PublishDir).Path
+
 # MSI requires numerical version format: Major.Minor.Build[.Revision]
 $cleanSemVer = $Version.Split('-')[0]
 $parts = $cleanSemVer.Split('.')
@@ -37,6 +40,11 @@ Write-Host "Building Windows MSI Installer: $outputMsiPath (Version: $msiVersion
 if (-not (Get-Command wix -ErrorAction SilentlyContinue)) {
     Write-Host "Installing WiX .NET global tool..."
     dotnet tool install --global wix
+}
+
+$dotnetTools = Join-Path $env:USERPROFILE ".dotnet\tools"
+if ($env:PATH -notlike "*$dotnetTools*") {
+    $env:PATH = "$dotnetTools;$env:PATH"
 }
 
 $wixFilePath = Join-Path $PSScriptRoot "ParityProof.wxs"

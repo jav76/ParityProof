@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Threading.Tasks;
 using AspectInjector.Broker;
@@ -98,6 +99,10 @@ public sealed class LogMethodAspect
         return result;
     }
 
+    [UnconditionalSuppressMessage(
+        "ReflectionAnalysis",
+        "IL2075:UnrecognizedReflectionPattern",
+        Justification = "Dynamic PropertyInfo retrieval on Task<T>.Result is safe because Task<T>.Result is preserved on generic Task instances.")]
     private static void HandleAsyncTask(
         Task task,
         MethodBase method,

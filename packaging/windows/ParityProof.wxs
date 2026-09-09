@@ -27,7 +27,7 @@
         <Shortcut Id="ApplicationStartMenuShortcut"
                   Name="ParityProof"
                   Description="Pro Media Ingest and Backup Verification"
-                  Target="[!ParityProof.App.exe]"
+                  Target="[INSTALLFOLDER]ParityProof.App.exe"
                   WorkingDirectory="INSTALLFOLDER" />
         <RemoveFolder Id="CleanUpShortCut" Directory="ApplicationProgramsFolder" On="uninstall" />
         <RegistryValue Root="HKCU"
