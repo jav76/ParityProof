@@ -61,10 +61,35 @@ mkdir -p "$OUTPUT_DIR"
 # Check if running on macOS (hdiutil available)
 if command -v hdiutil >/dev/null 2>&1; then
     DMG_STAGE=$(mktemp -d -t "dmg-stage-XXXXXX")
+    trap 'rm -rf "$APP_DIR" "$DMG_STAGE"' EXIT
     cp -r "$APP_DIR/$APP_BUNDLE" "$DMG_STAGE/"
     ln -s /Applications "$DMG_STAGE/Applications"
-    hdiutil create -volname "ParityProof" -srcfolder "$DMG_STAGE" -ov -format UDZO "$OUTPUT_DIR/${DMG_NAME}.dmg"
+
+    MAX_ATTEMPTS=5
+    ATTEMPT=1
+    SUCCESS=0
+
+    while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+        sync
+        echo "Creating DMG (attempt $ATTEMPT of $MAX_ATTEMPTS)..."
+        if hdiutil create -volname "ParityProof" -srcfolder "$DMG_STAGE" -ov -format UDZO -fs HFS+ "$OUTPUT_DIR/${DMG_NAME}.dmg"; then
+            SUCCESS=1
+            break
+        else
+            echo "hdiutil create failed on attempt $ATTEMPT. Waiting before retry..."
+            hdiutil detach "/Volumes/ParityProof" -force >/dev/null 2>&1 || true
+            sleep $(( ATTEMPT * 3 ))
+            ATTEMPT=$(( ATTEMPT + 1 ))
+        fi
+    done
+
     rm -rf "$DMG_STAGE"
+
+    if [ "$SUCCESS" -ne 1 ]; then
+        echo "Failed to create DMG after $MAX_ATTEMPTS attempts." >&2
+        exit 1
+    fi
+
     echo "Generated $OUTPUT_DIR/${DMG_NAME}.dmg"
 else
     # Fallback when running on non-macOS environment: create tar.gz of .app bundle
