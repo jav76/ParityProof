@@ -130,6 +130,50 @@ public sealed class MediaCopierTests : IDisposable
         Assert.Equal(payload.Length, new FileInfo(expectedPath).Length);
     }
 
+    [Fact]
+    public async Task CopyMissingFilesAsync_PreExistingBackupOnOneDestination_IsPreservedWhenTransferCancelled()
+    {
+        string srcDir = Path.Combine(_testDir, "src_qa001");
+        string dstDir1 = Path.Combine(_testDir, "dst_existing");
+        string dstDir2 = Path.Combine(_testDir, "dst_new");
+        Directory.CreateDirectory(srcDir);
+        Directory.CreateDirectory(dstDir1);
+        Directory.CreateDirectory(dstDir2);
+
+        string fileName = "PHOTO_QA001.CR3";
+        string srcFilePath = Path.Combine(srcDir, fileName);
+        byte[] payload = new byte[128 * 1024];
+        Random.Shared.NextBytes(payload);
+        File.WriteAllBytes(srcFilePath, payload);
+
+        // Pre-create identical intact backup on Destination 1
+        string dst1FilePath = Path.Combine(dstDir1, fileName);
+        File.WriteAllBytes(dst1FilePath, payload);
+
+        MediaFile missingFile = new(
+            RelativePath: fileName,
+            FullPath: srcFilePath,
+            FileLength: payload.Length,
+            LastWriteTimeUtc: DateTime.UtcNow,
+            Category: MediaCategory.PhotoRaw);
+
+        using CancellationTokenSource cts = new();
+        cts.Cancel(); // Cancel immediately
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+        {
+            await _copier.CopyMissingFilesAsync(
+                new[] { missingFile },
+                new List<string> { dstDir1, dstDir2 },
+                cancellationToken: cts.Token);
+        });
+
+        // Pre-existing backup on Destination 1 MUST still exist and be intact!
+        Assert.True(File.Exists(dst1FilePath), "Pre-existing backup file on Destination 1 must not be deleted on cancellation.");
+        Assert.Equal(payload.Length, new FileInfo(dst1FilePath).Length);
+        Assert.Equal(payload, File.ReadAllBytes(dst1FilePath));
+    }
+
     public void Dispose()
     {
         try

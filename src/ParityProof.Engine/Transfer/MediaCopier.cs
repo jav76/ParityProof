@@ -20,6 +20,7 @@ public sealed class MediaCopier : IMediaCopier
 {
     private const int COPY_BUFFER_SIZE = 2 * 1024 * 1024; // 2 MB streaming buffer
     private const int HEAD_TAIL_CHUNK_SIZE = 64 * 1024; // 64 KB head/tail boundary chunk
+    private const string TEMP_FILE_EXTENSION = ".parityproof.tmp";
 
     public Task<int> CopyMissingFilesAsync(
         IReadOnlyList<MediaFile> missingFiles,
@@ -91,16 +92,47 @@ public sealed class MediaCopier : IMediaCopier
                     overallStopwatch.Start();
                 }
 
-                List<string> destFilePaths = new(activeDestPaths.Count);
+                List<string> destPathsToWrite = new(activeDestPaths.Count);
+                List<string> tempPathsToClean = new(activeDestPaths.Count);
+
+                ulong srcHead = file.HeadHash ?? 0;
+                ulong srcTail = file.TailHash ?? 0;
+                bool srcHashesKnown = srcHead != 0 || srcTail != 0;
+
                 foreach (string destRoot in activeDestPaths)
                 {
                     string path = Path.Combine(destRoot, file.RelativePath);
+                    FileInfo existingInfo = new(path);
+                    if (existingInfo.Exists && existingInfo.Length == file.FileLength)
+                    {
+                        if (!srcHashesKnown)
+                        {
+                            (srcHead, srcTail) = ChunkReader.ComputeHeadTailHash(file.FullPath);
+                            srcHashesKnown = true;
+                        }
+
+                        (ulong dstHead, ulong dstTail) = ChunkReader.ComputeHeadTailHash(path);
+                        if (dstHead == srcHead && dstTail == srcTail)
+                        {
+                            // Destination already has an intact, verified copy of this file.
+                            continue;
+                        }
+                    }
+
                     string? dir = Path.GetDirectoryName(path);
                     if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
                     {
                         Directory.CreateDirectory(dir);
                     }
-                    destFilePaths.Add(path);
+
+                    destPathsToWrite.Add(path);
+                    tempPathsToClean.Add(path + TEMP_FILE_EXTENSION);
+                }
+
+                if (destPathsToWrite.Count == 0)
+                {
+                    completedFiles++;
+                    continue;
                 }
 
                 long fileCopiedBytes = 0;
@@ -119,13 +151,13 @@ public sealed class MediaCopier : IMediaCopier
                         bufferSize: 0,
                         FileOptions.SequentialScan | FileOptions.Asynchronous))
                     {
-                        List<FileStream> destStreams = new(destFilePaths.Count);
+                        List<FileStream> destStreams = new(destPathsToWrite.Count);
                         try
                         {
-                            foreach (string destPath in destFilePaths)
+                            foreach (string tempPath in tempPathsToClean)
                             {
                                 destStreams.Add(new FileStream(
-                                    destPath,
+                                    tempPath,
                                     FileMode.Create,
                                     FileAccess.Write,
                                     FileShare.None,
@@ -235,35 +267,40 @@ public sealed class MediaCopier : IMediaCopier
                     }
 
                     // Zero-pass source verification: verify destination files against in-flight computed hashes
-                    foreach (string destPath in destFilePaths)
+                    for (int i = 0; i < destPathsToWrite.Count; i++)
                     {
-                        FileInfo destInfo = new(destPath);
-                        if (destInfo.Length != file.FileLength)
+                        string tempPath = tempPathsToClean[i];
+                        string destPath = destPathsToWrite[i];
+
+                        FileInfo tempInfo = new(tempPath);
+                        if (tempInfo.Length != file.FileLength)
                         {
                             throw new IOException(
-                                $"Post-copy size verification failed for '{file.RelativePath}' at '{destPath}'. Expected {file.FileLength} bytes, wrote {destInfo.Length} bytes.");
+                                $"Post-copy size verification failed for '{file.RelativePath}' at '{destPath}'. Expected {file.FileLength} bytes, wrote {tempInfo.Length} bytes.");
                         }
 
-                        (ulong dstHead, ulong dstTail) = ChunkReader.ComputeHeadTailHash(destPath);
+                        (ulong dstHead, ulong dstTail) = ChunkReader.ComputeHeadTailHash(tempPath);
                         if (dstHead != inFlightHeadHash || dstTail != inFlightTailHash)
                         {
                             throw new IOException(
                                 $"Post-copy hash verification failed for '{file.RelativePath}' at '{destPath}'. Destination checksum mismatch after transfer.");
                         }
+
+                        File.Move(tempPath, destPath, overwrite: true);
                     }
 
                     completedFiles++;
                 }
                 catch (Exception)
                 {
-                    // Clean up partial files across all destinations on failure or cancellation
-                    foreach (string destPath in destFilePaths)
+                    // Clean up partial temporary files only. Never touch pre-existing files.
+                    foreach (string tempPath in tempPathsToClean)
                     {
-                        if (File.Exists(destPath))
+                        if (File.Exists(tempPath))
                         {
                             try
                             {
-                                File.Delete(destPath);
+                                File.Delete(tempPath);
                             }
                             catch
                             {
