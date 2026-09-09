@@ -122,6 +122,111 @@ public sealed class ContentAddressedMatcherTests : IDisposable
         Assert.Equal(MediaStatus.Corrupt, quickStatus.Status);
     }
 
+    [Fact]
+    public async Task MatchFileAsync_DeepProbeMode_MatchesIdenticalFiles()
+    {
+        string srcPath = Path.Combine(_testDir, "card_deep", "IMG_0002.CR3");
+        string dstPath = Path.Combine(_testDir, "backup_deep", "IMG_0002.CR3");
+
+        Directory.CreateDirectory(Path.GetDirectoryName(srcPath)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(dstPath)!);
+
+        byte[] payload = new byte[8 * 1024 * 1024]; // 8 MB (Tier 2)
+        Random.Shared.NextBytes(payload);
+
+        File.WriteAllBytes(srcPath, payload);
+        File.WriteAllBytes(dstPath, payload);
+
+        MediaFile srcFile = new(
+            RelativePath: "IMG_0002.CR3",
+            FullPath: srcPath,
+            FileLength: payload.Length,
+            LastWriteTimeUtc: DateTime.UtcNow,
+            Category: MediaCategory.PhotoRaw);
+
+        MediaFile dstFile = new(
+            RelativePath: "IMG_0002.CR3",
+            FullPath: dstPath,
+            FileLength: payload.Length,
+            LastWriteTimeUtc: DateTime.UtcNow,
+            Category: MediaCategory.PhotoRaw);
+
+        BackupDestination destination = new("dest1", "Primary SSD", Path.Combine(_testDir, "backup_deep"));
+        Dictionary<long, List<MediaFile>> index = new()
+        {
+            [payload.Length] = new List<MediaFile> { dstFile }
+        };
+
+        FileMatchStatus deepStatus = await _matcher.MatchFileAsync(
+            srcFile,
+            destination,
+            index,
+            VerificationMode.Deep);
+
+        Assert.Equal(MediaStatus.Verified, deepStatus.Status);
+        Assert.Equal(dstPath, deepStatus.MatchedFilePath);
+    }
+
+    [Fact]
+    public async Task MatchFileAsync_DeepProbeMode_DetectsInteriorCorruption_WhileQuickModeMissesIt()
+    {
+        string srcPath = Path.Combine(_testDir, "card_interior", "IMG_INTERIOR.CR3");
+        string dstPath = Path.Combine(_testDir, "backup_interior", "IMG_INTERIOR.CR3");
+
+        Directory.CreateDirectory(Path.GetDirectoryName(srcPath)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(dstPath)!);
+
+        const int FILE_SIZE = 8 * 1024 * 1024; // 8 MB (Tier 2)
+        byte[] payloadSrc = new byte[FILE_SIZE];
+        byte[] payloadDst = new byte[FILE_SIZE];
+        Random.Shared.NextBytes(payloadSrc);
+        Array.Copy(payloadSrc, payloadDst, FILE_SIZE);
+
+        // Mutate byte in the interior (at 50% = 4 MB), keeping head 64 KB and tail 64 KB completely identical
+        payloadDst[4 * 1024 * 1024] = (byte)(payloadDst[4 * 1024 * 1024] ^ 0xFF);
+
+        File.WriteAllBytes(srcPath, payloadSrc);
+        File.WriteAllBytes(dstPath, payloadDst);
+
+        MediaFile srcFile = new(
+            RelativePath: "IMG_INTERIOR.CR3",
+            FullPath: srcPath,
+            FileLength: FILE_SIZE,
+            LastWriteTimeUtc: DateTime.UtcNow,
+            Category: MediaCategory.PhotoRaw);
+
+        MediaFile dstFile = new(
+            RelativePath: "IMG_INTERIOR.CR3",
+            FullPath: dstPath,
+            FileLength: FILE_SIZE,
+            LastWriteTimeUtc: DateTime.UtcNow,
+            Category: MediaCategory.PhotoRaw);
+
+        BackupDestination destination = new("dest1", "Primary SSD", Path.Combine(_testDir, "backup_interior"));
+        Dictionary<long, List<MediaFile>> index = new()
+        {
+            [FILE_SIZE] = new List<MediaFile> { dstFile }
+        };
+
+        // Quick mode checks only head & tail, so it should report Verified (misses the middle corruption)
+        FileMatchStatus quickStatus = await _matcher.MatchFileAsync(
+            srcFile,
+            destination,
+            index,
+            VerificationMode.Quick);
+
+        Assert.Equal(MediaStatus.Verified, quickStatus.Status);
+
+        // Deep Probe mode samples interior slices, so it detects the corruption!
+        FileMatchStatus deepStatus = await _matcher.MatchFileAsync(
+            srcFile,
+            destination,
+            index,
+            VerificationMode.Deep);
+
+        Assert.Equal(MediaStatus.Corrupt, deepStatus.Status);
+    }
+
     public void Dispose()
     {
         try

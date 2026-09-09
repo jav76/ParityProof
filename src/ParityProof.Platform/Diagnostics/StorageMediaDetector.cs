@@ -11,6 +11,9 @@ public static class StorageMediaDetector
     public const int DEFAULT_SSD_WORKERS = 8;
     public const int DEFAULT_HDD_WORKERS = 2;
     public const int MIN_PARALLEL_WORKERS = 2;
+    public const int DEFAULT_SD_CARD_WORKERS = 2;
+    public const int MAX_SD_CARD_WORKERS = 3;
+    public const int DEFAULT_FALLBACK_WORKERS = 4;
 
     private static readonly HashSet<string> NetworkFileSystemTypes = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -65,31 +68,34 @@ public static class StorageMediaDetector
         };
     }
 
-    public static int GetRecommendedVerificationConcurrency(string sourcePath)
+    public static int GetRecommendedDriveWorkers(string path)
     {
-        if (string.IsNullOrWhiteSpace(sourcePath))
+        if (string.IsNullOrWhiteSpace(path))
         {
-            return 4;
+            return DEFAULT_FALLBACK_WORKERS;
         }
 
         int cpuCores = Environment.ProcessorCount;
 
-        if (IsRemovableStorage(sourcePath))
+        if (IsRemovableStorage(path))
         {
             // Removable media and SD cards perform best with 2 to 3 concurrent readers to prevent flash controller thrashing
-            return Math.Clamp(cpuCores, 2, 3);
+            return Math.Clamp(cpuCores, DEFAULT_SD_CARD_WORKERS, MAX_SD_CARD_WORKERS);
         }
 
-        StorageMediaType mediaType = Detect(sourcePath);
+        StorageMediaType mediaType = Detect(path);
 
         return mediaType switch
         {
-            StorageMediaType.RotationalHdd => 2,
-            StorageMediaType.NetworkShare => Math.Clamp(cpuCores, 2, 6),
-            StorageMediaType.SolidState => Math.Clamp(cpuCores, 2, 6),
-            _ => Math.Clamp(cpuCores / 2, 2, 4)
+            StorageMediaType.RotationalHdd => DEFAULT_HDD_WORKERS,
+            StorageMediaType.NetworkShare => Math.Clamp(cpuCores, MIN_PARALLEL_WORKERS, DEFAULT_NETWORK_WORKERS),
+            StorageMediaType.SolidState => Math.Clamp(cpuCores, MIN_PARALLEL_WORKERS, DEFAULT_SSD_WORKERS),
+            _ => Math.Clamp(cpuCores / 2, MIN_PARALLEL_WORKERS, DEFAULT_SSD_WORKERS)
         };
     }
+
+    public static int GetRecommendedVerificationConcurrency(string sourcePath) =>
+        GetRecommendedDriveWorkers(sourcePath);
 
     public static bool IsRemovableStorage(string path)
     {

@@ -342,35 +342,55 @@ public sealed class DuplicateAnalyzer : IDuplicateAnalyzer
             return BuildDuplicateAnalysisResult(quickGroups);
         }
 
-        // Stage 3: Bit-for-Bit Hash Verification (Full Mode Only).
+        // Stage 3: Deep Probe or Bit-for-Bit Hash Verification (Deep and Full Modes).
         // Thoroughly verify ONLY candidate duplicate groups that matched on size and head/tail hashes with source files.
         List<DestinationFileEntry> confirmedCandidates = quickCandidateBuckets
             .SelectMany(bucket => bucket)
             .ToList();
 
-        // Hydrate full hashes for relevant source files
-        HashSet<(long Length, ulong FullHash)> validSourceFullKeys = new();
+        bool isDeep = mode == VerificationMode.Deep;
+        string phasePrefix = isDeep ? "Verifying Deep Probe Hash" : "Verifying Bit-for-Bit Hash";
+
+        // Hydrate deep or full hashes for relevant source files
+        HashSet<(long Length, ulong Hash)> validSourceKeys = new();
         foreach (MediaFile sf in hydratedSources)
         {
             MediaFile currentSource = sf;
-            if (!currentSource.FullHash.HasValue)
+            if (isDeep)
             {
-                if (currentSource.FileLength <= ChunkReader.DEFAULT_CHUNK_SIZE && currentSource.HeadHash.HasValue)
+                if (!currentSource.DeepHash.HasValue)
                 {
-                    currentSource = currentSource with { FullHash = currentSource.HeadHash.Value };
-                }
-                else
-                {
-                    ulong fullHash = ComputeFullFileHash(currentSource.FullPath, cancellationToken);
-                    currentSource = currentSource with { FullHash = fullHash };
+                    ulong deepHash = DeepProbeHasher.ComputeDeepHash(currentSource.FullPath, cancellationToken: cancellationToken);
+                    currentSource = currentSource with { DeepHash = deepHash };
+                    cacheUpsertBag.Add(currentSource);
                 }
 
-                cacheUpsertBag.Add(currentSource);
+                if (currentSource.DeepHash.HasValue)
+                {
+                    validSourceKeys.Add((currentSource.FileLength, currentSource.DeepHash.Value));
+                }
             }
-
-            if (currentSource.FullHash.HasValue)
+            else
             {
-                validSourceFullKeys.Add((currentSource.FileLength, currentSource.FullHash.Value));
+                if (!currentSource.FullHash.HasValue)
+                {
+                    if (currentSource.FileLength <= ChunkReader.DEFAULT_CHUNK_SIZE && currentSource.HeadHash.HasValue)
+                    {
+                        currentSource = currentSource with { FullHash = currentSource.HeadHash.Value };
+                    }
+                    else
+                    {
+                        ulong fullHash = ComputeFullFileHash(currentSource.FullPath, cancellationToken);
+                        currentSource = currentSource with { FullHash = fullHash };
+                    }
+
+                    cacheUpsertBag.Add(currentSource);
+                }
+
+                if (currentSource.FullHash.HasValue)
+                {
+                    validSourceKeys.Add((currentSource.FileLength, currentSource.FullHash.Value));
+                }
             }
         }
 
@@ -397,19 +417,31 @@ public sealed class DuplicateAnalyzer : IDuplicateAnalyzer
                 DestinationFileEntry entry = confirmedCandidates[index];
                 MediaFile currentFile = entry.File;
 
-                if (!currentFile.FullHash.HasValue)
+                if (isDeep)
                 {
-                    if (currentFile.FileLength <= ChunkReader.DEFAULT_CHUNK_SIZE && currentFile.HeadHash.HasValue)
+                    if (!currentFile.DeepHash.HasValue)
                     {
-                        currentFile = currentFile with { FullHash = currentFile.HeadHash.Value };
+                        ulong deepHash = DeepProbeHasher.ComputeDeepHash(currentFile.FullPath, cancellationToken: ct);
+                        currentFile = currentFile with { DeepHash = deepHash };
+                        cacheUpsertBag.Add(currentFile);
                     }
-                    else
+                }
+                else
+                {
+                    if (!currentFile.FullHash.HasValue)
                     {
-                        ulong fullHash = ComputeFullFileHash(currentFile.FullPath, ct);
-                        currentFile = currentFile with { FullHash = fullHash };
-                    }
+                        if (currentFile.FileLength <= ChunkReader.DEFAULT_CHUNK_SIZE && currentFile.HeadHash.HasValue)
+                        {
+                            currentFile = currentFile with { FullHash = currentFile.HeadHash.Value };
+                        }
+                        else
+                        {
+                            ulong fullHash = ComputeFullFileHash(currentFile.FullPath, ct);
+                            currentFile = currentFile with { FullHash = fullHash };
+                        }
 
-                    cacheUpsertBag.Add(currentFile);
+                        cacheUpsertBag.Add(currentFile);
+                    }
                 }
 
                 fullyHashedArray[index] = new DestinationFileEntry(
@@ -431,7 +463,7 @@ public sealed class DuplicateAnalyzer : IDuplicateAnalyzer
                     TotalFiles: totalConfirmed,
                     ProcessedBytes: completedBytes,
                     TotalBytes: totalConfirmedBytes,
-                    Phase: $"Verifying Bit-for-Bit Hash: {Path.GetFileName(currentFile.FullPath)}",
+                    Phase: $"{phasePrefix}: {Path.GetFileName(currentFile.FullPath)}",
                     CurrentFileBytes: currentFile.FileLength,
                     CurrentFileProcessedBytes: currentFile.FileLength,
                     MegaBytesPerSecond: Math.Round(mbPerSec, 1),
@@ -446,15 +478,16 @@ public sealed class DuplicateAnalyzer : IDuplicateAnalyzer
 
         List<DestinationFileEntry> fullyHashedCandidates = fullyHashedArray.ToList();
 
-        // Sub-group by (FileLength, FullHash), only keeping destination files whose full hash matches a source file
+        // Sub-group by (FileLength, Hash), only keeping destination files whose hash matches a source file
         Dictionary<(long Length, ulong Hash), List<DestinationFileEntry>> finalBuckets = new();
         foreach (DestinationFileEntry entry in fullyHashedCandidates)
         {
+            ulong? effectiveHash = isDeep ? entry.File.DeepHash : entry.File.FullHash;
             (long Length, ulong Hash) key = (
                 entry.File.FileLength,
-                entry.File.FullHash ?? 0UL);
+                effectiveHash ?? 0UL);
 
-            if (!validSourceFullKeys.Contains(key))
+            if (!validSourceKeys.Contains(key))
             {
                 continue;
             }

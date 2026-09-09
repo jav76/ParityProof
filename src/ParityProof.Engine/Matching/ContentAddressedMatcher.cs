@@ -1,25 +1,22 @@
 using System;
-using System.Buffers;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using ParityProof.Core.Enums;
 using ParityProof.Core.Interfaces;
 using ParityProof.Core.Logging;
 using ParityProof.Core.Models;
-using ParityProof.Engine.Hashing;
 using ParityProof.Engine.IO;
-using Microsoft.Win32.SafeHandles;
 
 namespace ParityProof.Engine.Matching;
 
 [LogMethod]
 public sealed class ContentAddressedMatcher
 {
-    private const int FULL_HASH_BUFFER_SIZE = 1024 * 1024; // 1 MB buffer
-
     private readonly IIndexCache? _cache;
 
     public ContentAddressedMatcher(IIndexCache? cache = null)
@@ -30,6 +27,9 @@ public sealed class ContentAddressedMatcher
     public async Task<MediaFile> EnsureHashesAsync(
         MediaFile file,
         VerificationMode mode,
+        ConcurrentDictionary<string, MediaFile>? inMemoryCache = null,
+        ChannelWriter<MediaFile>? persistenceWriter = null,
+        Action<long>? onBytesRead = null,
         CancellationToken cancellationToken = default)
     {
         if (mode == VerificationMode.SuperFast)
@@ -39,7 +39,26 @@ public sealed class ContentAddressedMatcher
 
         MediaFile updated = file;
 
-        if (_cache is not null)
+        if (inMemoryCache is not null && inMemoryCache.TryGetValue(file.FullPath, out MediaFile? memCached))
+        {
+            if (mode == VerificationMode.Quick && memCached.HeadHash.HasValue && memCached.TailHash.HasValue)
+            {
+                return memCached;
+            }
+
+            if (mode == VerificationMode.Deep && memCached.DeepHash.HasValue)
+            {
+                return memCached;
+            }
+
+            if (mode == VerificationMode.Full && memCached.FullHash.HasValue)
+            {
+                return memCached;
+            }
+
+            updated = memCached;
+        }
+        else if (_cache is not null)
         {
             MediaFile? cached = await _cache.GetAsync(
                 file.FullPath,
@@ -49,7 +68,14 @@ public sealed class ContentAddressedMatcher
 
             if (cached is not null)
             {
+                inMemoryCache?.TryAdd(cached.FullPath, cached);
+
                 if (mode == VerificationMode.Quick && cached.HeadHash.HasValue && cached.TailHash.HasValue)
+                {
+                    return cached;
+                }
+
+                if (mode == VerificationMode.Deep && cached.DeepHash.HasValue)
                 {
                     return cached;
                 }
@@ -69,8 +95,44 @@ public sealed class ContentAddressedMatcher
             {
                 (ulong head, ulong tail) = ChunkReader.ComputeHeadTailHash(file.FullPath);
                 updated = updated with { HeadHash = head, TailHash = tail };
+                onBytesRead?.Invoke(ChunkReader.DEFAULT_CHUNK_SIZE * 2);
 
-                if (_cache is not null)
+                if (inMemoryCache is not null)
+                {
+                    inMemoryCache[updated.FullPath] = updated;
+                }
+
+                if (persistenceWriter is not null)
+                {
+                    persistenceWriter.TryWrite(updated);
+                }
+                else if (_cache is not null)
+                {
+                    await _cache.UpsertBatchAsync(new[] { updated }, cancellationToken).ConfigureAwait(false);
+                }
+            }
+        }
+        else if (mode == VerificationMode.Deep)
+        {
+            if (!updated.DeepHash.HasValue)
+            {
+                ulong deepHash = DeepProbeHasher.ComputeDeepHash(
+                    file.FullPath,
+                    onBytesRead: onBytesRead,
+                    cancellationToken: cancellationToken);
+
+                updated = updated with { DeepHash = deepHash };
+
+                if (inMemoryCache is not null)
+                {
+                    inMemoryCache[updated.FullPath] = updated;
+                }
+
+                if (persistenceWriter is not null)
+                {
+                    persistenceWriter.TryWrite(updated);
+                }
+                else if (_cache is not null)
                 {
                     await _cache.UpsertBatchAsync(new[] { updated }, cancellationToken).ConfigureAwait(false);
                 }
@@ -80,10 +142,27 @@ public sealed class ContentAddressedMatcher
         {
             if (!updated.FullHash.HasValue)
             {
-                ulong fullHash = ComputeFullFileHash(file.FullPath, cancellationToken);
-                updated = updated with { FullHash = fullHash };
+                FileHashResult hashResult = await AsyncDoubleBufferedFileHasher.ComputeHashAsync(
+                    file.FullPath,
+                    onBytesRead: onBytesRead,
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
 
-                if (_cache is not null)
+                updated = updated with
+                {
+                    FullHash = hashResult.FullHash,
+                    HeadHash = updated.HeadHash ?? hashResult.HeadHash
+                };
+
+                if (inMemoryCache is not null)
+                {
+                    inMemoryCache[updated.FullPath] = updated;
+                }
+
+                if (persistenceWriter is not null)
+                {
+                    persistenceWriter.TryWrite(updated);
+                }
+                else if (_cache is not null)
                 {
                     await _cache.UpsertBatchAsync(new[] { updated }, cancellationToken).ConfigureAwait(false);
                 }
@@ -93,27 +172,15 @@ public sealed class ContentAddressedMatcher
         return updated;
     }
 
-    private static ulong ComputeFullFileHash(string filePath, CancellationToken cancellationToken)
-    {
-        using SafeFileHandle handle = NativeDirectIO.OpenDirectOrSequential(filePath);
-        using FileStream stream = new(handle, FileAccess.Read);
-
-        byte[] rentedBuffer = ArrayPool<byte>.Shared.Rent(FULL_HASH_BUFFER_SIZE);
-        try
-        {
-            return SimdHasher.HashStream(stream, rentedBuffer, cancellationToken);
-        }
-        finally
-        {
-            ArrayPool<byte>.Shared.Return(rentedBuffer);
-        }
-    }
-
     public async Task<FileMatchStatus> MatchFileAsync(
         MediaFile sourceFile,
         BackupDestination destination,
         Dictionary<long, List<MediaFile>> destinationIndexByLength,
         VerificationMode mode,
+        ConcurrentDictionary<string, MediaFile>? inMemoryCache = null,
+        ChannelWriter<MediaFile>? persistenceWriter = null,
+        Action<long>? onSourceBytesRead = null,
+        Action<long>? onDestBytesRead = null,
         CancellationToken cancellationToken = default)
     {
         if (!destinationIndexByLength.TryGetValue(sourceFile.FileLength, out List<MediaFile>? candidates) ||
@@ -172,15 +239,25 @@ public sealed class ContentAddressedMatcher
 
         if (mode == VerificationMode.Quick)
         {
-            MediaFile hydratedSource = await EnsureHashesAsync(sourceFile, VerificationMode.Quick, cancellationToken)
-                .ConfigureAwait(false);
+            MediaFile hydratedSource = await EnsureHashesAsync(
+                sourceFile,
+                VerificationMode.Quick,
+                inMemoryCache,
+                persistenceWriter,
+                onSourceBytesRead,
+                cancellationToken).ConfigureAwait(false);
 
             foreach (MediaFile candidate in candidates)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                MediaFile hydratedCandidate = await EnsureHashesAsync(candidate, VerificationMode.Quick, cancellationToken)
-                    .ConfigureAwait(false);
+                MediaFile hydratedCandidate = await EnsureHashesAsync(
+                    candidate,
+                    VerificationMode.Quick,
+                    inMemoryCache,
+                    persistenceWriter,
+                    onDestBytesRead,
+                    cancellationToken).ConfigureAwait(false);
 
                 if (hydratedSource.HeadHash == hydratedCandidate.HeadHash &&
                     hydratedSource.TailHash == hydratedCandidate.TailHash)
@@ -200,22 +277,34 @@ public sealed class ContentAddressedMatcher
                 DestinationId: destination.Id,
                 DestinationRootPath: destination.RootPath,
                 Status: hasSamePathCandidate ? MediaStatus.Corrupt : MediaStatus.Missing,
-                FailureReason: hasSamePathCandidate ? "Checksum mismatch on head/tail chunks." : "No candidate matched head/tail checksum.");
+                FailureReason: hasSamePathCandidate
+                    ? "Checksum mismatch on head/tail chunks."
+                    : "No candidate matched head/tail checksum.");
         }
 
-        if (mode == VerificationMode.Full)
+        if (mode == VerificationMode.Deep)
         {
-            MediaFile hydratedSource = await EnsureHashesAsync(sourceFile, VerificationMode.Full, cancellationToken)
-                .ConfigureAwait(false);
+            MediaFile hydratedSource = await EnsureHashesAsync(
+                sourceFile,
+                VerificationMode.Deep,
+                inMemoryCache,
+                persistenceWriter,
+                onSourceBytesRead,
+                cancellationToken).ConfigureAwait(false);
 
             foreach (MediaFile candidate in candidates)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                MediaFile hydratedCandidate = await EnsureHashesAsync(candidate, VerificationMode.Full, cancellationToken)
-                    .ConfigureAwait(false);
+                MediaFile hydratedCandidate = await EnsureHashesAsync(
+                    candidate,
+                    VerificationMode.Deep,
+                    inMemoryCache,
+                    persistenceWriter,
+                    onDestBytesRead,
+                    cancellationToken).ConfigureAwait(false);
 
-                if (hydratedSource.FullHash == hydratedCandidate.FullHash)
+                if (hydratedSource.DeepHash == hydratedCandidate.DeepHash)
                 {
                     return new FileMatchStatus(
                         DestinationId: destination.Id,
@@ -232,7 +321,165 @@ public sealed class ContentAddressedMatcher
                 DestinationId: destination.Id,
                 DestinationRootPath: destination.RootPath,
                 Status: hasSamePathCandidate ? MediaStatus.Corrupt : MediaStatus.Missing,
-                FailureReason: hasSamePathCandidate ? "Full file bit-for-bit checksum mismatch." : "No candidate matched full file checksum.");
+                FailureReason: hasSamePathCandidate
+                    ? "Probe checksum mismatch across interior and boundary slices."
+                    : "No candidate matched deep probe checksum.");
+        }
+
+        if (mode == VerificationMode.Full)
+        {
+            List<MediaFile> orderedCandidates = candidates
+                .OrderByDescending(c => string.Equals(c.RelativePath, sourceFile.RelativePath, StringComparison.OrdinalIgnoreCase))
+                .ThenByDescending(c => string.Equals(Path.GetFileName(c.FullPath), sourceFileName, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            bool isCleanPathMatch = orderedCandidates.Count == 1 &&
+                string.Equals(orderedCandidates[0].RelativePath, sourceFile.RelativePath, StringComparison.OrdinalIgnoreCase);
+
+            if (isCleanPathMatch)
+            {
+                // Direct full stream with in-flight 64 KB head abort for clean 1:1 match
+                MediaFile hydratedSource = await EnsureHashesAsync(
+                    sourceFile,
+                    VerificationMode.Full,
+                    inMemoryCache,
+                    persistenceWriter,
+                    onSourceBytesRead,
+                    cancellationToken).ConfigureAwait(false);
+
+                MediaFile candidate = orderedCandidates[0];
+                MediaFile hydratedCandidate;
+
+                if (candidate.FullHash.HasValue)
+                {
+                    hydratedCandidate = candidate;
+                }
+                else
+                {
+                    FileHashResult candHash = await AsyncDoubleBufferedFileHasher.ComputeHashAsync(
+                        candidate.FullPath,
+                        expectedHeadHash: hydratedSource.HeadHash,
+                        onBytesRead: onDestBytesRead,
+                        cancellationToken: cancellationToken).ConfigureAwait(false);
+
+                    if (candHash.AbortedEarly || !candHash.Success)
+                    {
+                        return new FileMatchStatus(
+                            DestinationId: destination.Id,
+                            DestinationRootPath: destination.RootPath,
+                            Status: MediaStatus.Corrupt,
+                            FailureReason: "Full file checksum mismatch detected in initial stream chunk.");
+                    }
+
+                    hydratedCandidate = candidate with
+                    {
+                        FullHash = candHash.FullHash,
+                        HeadHash = candidate.HeadHash ?? candHash.HeadHash
+                    };
+
+                    if (inMemoryCache is not null)
+                    {
+                        inMemoryCache[hydratedCandidate.FullPath] = hydratedCandidate;
+                    }
+
+                    if (persistenceWriter is not null)
+                    {
+                        persistenceWriter.TryWrite(hydratedCandidate);
+                    }
+                    else if (_cache is not null)
+                    {
+                        await _cache.UpsertBatchAsync(new[] { hydratedCandidate }, cancellationToken).ConfigureAwait(false);
+                    }
+                }
+
+                if (hydratedSource.FullHash == hydratedCandidate.FullHash)
+                {
+                    return new FileMatchStatus(
+                        DestinationId: destination.Id,
+                        DestinationRootPath: destination.RootPath,
+                        Status: MediaStatus.Verified,
+                        MatchedFilePath: hydratedCandidate.FullPath);
+                }
+
+                return new FileMatchStatus(
+                    DestinationId: destination.Id,
+                    DestinationRootPath: destination.RootPath,
+                    Status: MediaStatus.Corrupt,
+                    FailureReason: "Full file bit-for-bit checksum mismatch.");
+            }
+            else
+            {
+                // Ambiguous or multiple candidates: run 128 KB Quick pass first to prune false candidates
+                MediaFile quickSource = await EnsureHashesAsync(
+                    sourceFile,
+                    VerificationMode.Quick,
+                    inMemoryCache,
+                    persistenceWriter,
+                    onSourceBytesRead,
+                    cancellationToken).ConfigureAwait(false);
+
+                List<MediaFile> qualifiedCandidates = new();
+                foreach (MediaFile candidate in orderedCandidates)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    MediaFile quickCand = await EnsureHashesAsync(
+                        candidate,
+                        VerificationMode.Quick,
+                        inMemoryCache,
+                        persistenceWriter,
+                        onDestBytesRead,
+                        cancellationToken).ConfigureAwait(false);
+
+                    if (quickSource.HeadHash == quickCand.HeadHash &&
+                        quickSource.TailHash == quickCand.TailHash)
+                    {
+                        qualifiedCandidates.Add(quickCand);
+                    }
+                }
+
+                if (qualifiedCandidates.Count > 0)
+                {
+                    MediaFile hydratedSource = await EnsureHashesAsync(
+                        quickSource,
+                        VerificationMode.Full,
+                        inMemoryCache,
+                        persistenceWriter,
+                        onSourceBytesRead,
+                        cancellationToken).ConfigureAwait(false);
+
+                    foreach (MediaFile qualifiedCand in qualifiedCandidates)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        MediaFile hydratedCand = await EnsureHashesAsync(
+                            qualifiedCand,
+                            VerificationMode.Full,
+                            inMemoryCache,
+                            persistenceWriter,
+                            onDestBytesRead,
+                            cancellationToken).ConfigureAwait(false);
+
+                        if (hydratedSource.FullHash == hydratedCand.FullHash)
+                        {
+                            return new FileMatchStatus(
+                                DestinationId: destination.Id,
+                                DestinationRootPath: destination.RootPath,
+                                Status: MediaStatus.Verified,
+                                MatchedFilePath: hydratedCand.FullPath);
+                        }
+                    }
+                }
+
+                bool hasSamePathCandidate = candidates.Any(c =>
+                    string.Equals(c.RelativePath, sourceFile.RelativePath, StringComparison.OrdinalIgnoreCase));
+
+                return new FileMatchStatus(
+                    DestinationId: destination.Id,
+                    DestinationRootPath: destination.RootPath,
+                    Status: hasSamePathCandidate ? MediaStatus.Corrupt : MediaStatus.Missing,
+                    FailureReason: hasSamePathCandidate
+                        ? "Full file bit-for-bit checksum mismatch."
+                        : "No candidate matched full file checksum.");
+            }
         }
 
         return new FileMatchStatus(

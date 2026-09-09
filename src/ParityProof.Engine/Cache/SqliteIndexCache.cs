@@ -70,10 +70,22 @@ public sealed class SqliteIndexCache : IIndexCache
                     Category INTEGER NOT NULL,
                     HeadHash INTEGER,
                     TailHash INTEGER,
+                    DeepHash INTEGER,
                     FullHash INTEGER
                 );
                 CREATE INDEX IF NOT EXISTS IX_MediaCache_Length ON MediaCache(FileLength);";
             await tableCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+
+            try
+            {
+                await using SqliteCommand alterCmd = connection.CreateCommand();
+                alterCmd.CommandText = "ALTER TABLE MediaCache ADD COLUMN DeepHash INTEGER;";
+                await alterCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (SqliteException)
+            {
+                // Column already exists or table was just created with it
+            }
 
             _initialized = true;
         }
@@ -96,7 +108,7 @@ public sealed class SqliteIndexCache : IIndexCache
 
         await using SqliteCommand command = connection.CreateCommand();
         command.CommandText = @"
-            SELECT RelativePath, Category, HeadHash, TailHash, FullHash
+            SELECT RelativePath, Category, HeadHash, TailHash, DeepHash, FullHash
             FROM MediaCache
             WHERE FilePath = @path AND FileLength = @length AND LastWriteTimeUtc = @lastWrite;";
 
@@ -111,7 +123,8 @@ public sealed class SqliteIndexCache : IIndexCache
             MediaCategory category = (MediaCategory)reader.GetInt32(1);
             ulong? headHash = reader.IsDBNull(2) ? null : (ulong)reader.GetInt64(2);
             ulong? tailHash = reader.IsDBNull(3) ? null : (ulong)reader.GetInt64(3);
-            ulong? fullHash = reader.IsDBNull(4) ? null : (ulong)reader.GetInt64(4);
+            ulong? deepHash = reader.IsDBNull(4) ? null : (ulong)reader.GetInt64(4);
+            ulong? fullHash = reader.IsDBNull(5) ? null : (ulong)reader.GetInt64(5);
 
             return new MediaFile(
                 RelativePath: relativePath,
@@ -121,6 +134,7 @@ public sealed class SqliteIndexCache : IIndexCache
                 Category: category,
                 HeadHash: headHash,
                 TailHash: tailHash,
+                DeepHash: deepHash,
                 FullHash: fullHash);
         }
 
@@ -167,7 +181,7 @@ public sealed class SqliteIndexCache : IIndexCache
             }
 
             command.CommandText = $@"
-                SELECT FilePath, RelativePath, FileLength, LastWriteTimeUtc, Category, HeadHash, TailHash, FullHash
+                SELECT FilePath, RelativePath, FileLength, LastWriteTimeUtc, Category, HeadHash, TailHash, DeepHash, FullHash
                 FROM MediaCache
                 WHERE FilePath IN ({string.Join(",", parameterNames)});";
 
@@ -186,7 +200,8 @@ public sealed class SqliteIndexCache : IIndexCache
                         MediaCategory category = (MediaCategory)reader.GetInt32(4);
                         ulong? headHash = reader.IsDBNull(5) ? null : (ulong)reader.GetInt64(5);
                         ulong? tailHash = reader.IsDBNull(6) ? null : (ulong)reader.GetInt64(6);
-                        ulong? fullHash = reader.IsDBNull(7) ? null : (ulong)reader.GetInt64(7);
+                        ulong? deepHash = reader.IsDBNull(7) ? null : (ulong)reader.GetInt64(7);
+                        ulong? fullHash = reader.IsDBNull(8) ? null : (ulong)reader.GetInt64(8);
 
                         result[path] = new MediaFile(
                             RelativePath: relativePath,
@@ -196,6 +211,7 @@ public sealed class SqliteIndexCache : IIndexCache
                             Category: category,
                             HeadHash: headHash,
                             TailHash: tailHash,
+                            DeepHash: deepHash,
                             FullHash: fullHash);
                     }
                 }
@@ -219,9 +235,9 @@ public sealed class SqliteIndexCache : IIndexCache
         command.Transaction = transaction;
         command.CommandText = @"
             INSERT INTO MediaCache (
-                FilePath, RelativePath, FileLength, LastWriteTimeUtc, Category, HeadHash, TailHash, FullHash
+                FilePath, RelativePath, FileLength, LastWriteTimeUtc, Category, HeadHash, TailHash, DeepHash, FullHash
             ) VALUES (
-                @path, @relPath, @length, @lastWrite, @category, @headHash, @tailHash, @fullHash
+                @path, @relPath, @length, @lastWrite, @category, @headHash, @tailHash, @deepHash, @fullHash
             ) ON CONFLICT(FilePath) DO UPDATE SET
                 RelativePath = excluded.RelativePath,
                 FileLength = excluded.FileLength,
@@ -229,6 +245,7 @@ public sealed class SqliteIndexCache : IIndexCache
                 Category = excluded.Category,
                 HeadHash = excluded.HeadHash,
                 TailHash = excluded.TailHash,
+                DeepHash = excluded.DeepHash,
                 FullHash = excluded.FullHash;";
 
         SqliteParameter pathParam = command.Parameters.Add("@path", SqliteType.Text);
@@ -238,6 +255,7 @@ public sealed class SqliteIndexCache : IIndexCache
         SqliteParameter categoryParam = command.Parameters.Add("@category", SqliteType.Integer);
         SqliteParameter headHashParam = command.Parameters.Add("@headHash", SqliteType.Integer);
         SqliteParameter tailHashParam = command.Parameters.Add("@tailHash", SqliteType.Integer);
+        SqliteParameter deepHashParam = command.Parameters.Add("@deepHash", SqliteType.Integer);
         SqliteParameter fullHashParam = command.Parameters.Add("@fullHash", SqliteType.Integer);
 
         foreach (MediaFile file in files)
@@ -251,6 +269,7 @@ public sealed class SqliteIndexCache : IIndexCache
             categoryParam.Value = (int)file.Category;
             headHashParam.Value = file.HeadHash.HasValue ? (long)file.HeadHash.Value : DBNull.Value;
             tailHashParam.Value = file.TailHash.HasValue ? (long)file.TailHash.Value : DBNull.Value;
+            deepHashParam.Value = file.DeepHash.HasValue ? (long)file.DeepHash.Value : DBNull.Value;
             fullHashParam.Value = file.FullHash.HasValue ? (long)file.FullHash.Value : DBNull.Value;
 
             await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
@@ -271,7 +290,7 @@ public sealed class SqliteIndexCache : IIndexCache
 
         await using SqliteCommand command = connection.CreateCommand();
         command.CommandText = @"
-            SELECT FilePath, RelativePath, LastWriteTimeUtc, Category, HeadHash, TailHash, FullHash
+            SELECT FilePath, RelativePath, LastWriteTimeUtc, Category, HeadHash, TailHash, DeepHash, FullHash
             FROM MediaCache
             WHERE FileLength = @length;";
         command.Parameters.AddWithValue("@length", fileLength);
@@ -285,7 +304,8 @@ public sealed class SqliteIndexCache : IIndexCache
             MediaCategory category = (MediaCategory)reader.GetInt32(3);
             ulong? headHash = reader.IsDBNull(4) ? null : (ulong)reader.GetInt64(4);
             ulong? tailHash = reader.IsDBNull(5) ? null : (ulong)reader.GetInt64(5);
-            ulong? fullHash = reader.IsDBNull(6) ? null : (ulong)reader.GetInt64(6);
+            ulong? deepHash = reader.IsDBNull(6) ? null : (ulong)reader.GetInt64(6);
+            ulong? fullHash = reader.IsDBNull(7) ? null : (ulong)reader.GetInt64(7);
 
             list.Add(new MediaFile(
                 RelativePath: relativePath,
@@ -295,6 +315,7 @@ public sealed class SqliteIndexCache : IIndexCache
                 Category: category,
                 HeadHash: headHash,
                 TailHash: tailHash,
+                DeepHash: deepHash,
                 FullHash: fullHash));
         }
 

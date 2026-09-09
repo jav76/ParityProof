@@ -562,7 +562,11 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
                     CurrentFileProgressText = string.Empty;
                 }
 
-                if (p.MegaBytesPerSecond > 0)
+                if (!string.IsNullOrWhiteSpace(p.MultiDriveThroughputText))
+                {
+                    ThroughputText = p.MultiDriveThroughputText;
+                }
+                else if (p.MegaBytesPerSecond > 0)
                 {
                     ThroughputText = $"{p.MegaBytesPerSecond:F1} MB/s";
                 }
@@ -1120,6 +1124,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     {
         VerificationMode.SuperFast => "Super-Fast",
         VerificationMode.Quick => "Quick",
+        VerificationMode.Deep => "Deep Probe",
         VerificationMode.Full => "Full",
         _ => mode.ToString()
     };

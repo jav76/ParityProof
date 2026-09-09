@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace ParityProof.Core.Models;
 
@@ -14,4 +15,7 @@ public sealed record VerificationProgress(
     double MegaBytesPerSecond = 0.0,
     TimeSpan EstimatedTimeRemaining = default,
     bool IsPaused = false,
-    double ScanRateFilesPerSecond = 0.0);
+    double ScanRateFilesPerSecond = 0.0,
+    string? MultiDriveThroughputText = null,
+    IReadOnlyDictionary<string, double>? DeviceThroughputs = null);
+

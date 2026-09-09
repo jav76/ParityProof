@@ -11,6 +11,7 @@ public sealed record MediaFile(
     MediaCategory Category,
     ulong? HeadHash = null,
     ulong? TailHash = null,
+    ulong? DeepHash = null,
     ulong? FullHash = null,
     string? CameraModel = null,
     DateTime? CaptureDateTime = null);

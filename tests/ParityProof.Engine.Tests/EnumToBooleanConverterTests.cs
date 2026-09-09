@@ -27,6 +27,12 @@ public sealed class EnumToBooleanConverterTests
             VerificationMode.Quick,
             CultureInfo.InvariantCulture);
 
+        object? resultDeep = _converter.Convert(
+            VerificationMode.Deep,
+            typeof(bool),
+            VerificationMode.Deep,
+            CultureInfo.InvariantCulture);
+
         object? resultFull = _converter.Convert(
             VerificationMode.Full,
             typeof(bool),
@@ -35,6 +41,7 @@ public sealed class EnumToBooleanConverterTests
 
         Assert.Equal(true, resultSuperFast);
         Assert.Equal(true, resultQuick);
+        Assert.Equal(true, resultDeep);
         Assert.Equal(true, resultFull);
     }
 
@@ -132,6 +139,7 @@ public sealed class EnumToBooleanConverterTests
     [Theory]
     [InlineData(VerificationMode.SuperFast, "Super-Fast")]
     [InlineData(VerificationMode.Quick, "Quick")]
+    [InlineData(VerificationMode.Deep, "Deep Probe")]
     [InlineData(VerificationMode.Full, "Full")]
     public void FormatScanMode_ReturnsExpectedUserFacingName(VerificationMode mode, string expected)
     {
@@ -148,6 +156,9 @@ public sealed class EnumToBooleanConverterTests
 
         vm.SelectedMode = VerificationMode.SuperFast;
         Assert.Equal("Super-Fast", vm.DisplayedScanMode);
+
+        vm.SelectedMode = VerificationMode.Deep;
+        Assert.Equal("Deep Probe", vm.DisplayedScanMode);
 
         vm.SelectedMode = VerificationMode.Full;
         Assert.Equal("Full", vm.DisplayedScanMode);

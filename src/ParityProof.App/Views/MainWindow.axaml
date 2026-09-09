@@ -279,15 +279,89 @@
                         <StackPanel Spacing="6" IsEnabled="{Binding CanStartOperation}">
                             <TextBlock Text="VERIFICATION MODE" FontSize="11" FontWeight="Bold" Foreground="#64748B"/>
                             <StackPanel Spacing="8">
-                                <RadioButton Content="Super-Fast (Metadata + Size only)"
-                                             IsChecked="{Binding SelectedMode, Converter={x:Static conv:EnumToBooleanConverter.Instance}, ConverterParameter={x:Static core:VerificationMode.SuperFast}}"
-                                             GroupName="ModeGroup" Foreground="#E2E8F0"/>
-                                <RadioButton Content="Quick (Metadata + 64KB Head/Tail Hash)"
-                                             IsChecked="{Binding SelectedMode, Converter={x:Static conv:EnumToBooleanConverter.Instance}, ConverterParameter={x:Static core:VerificationMode.Quick}}"
-                                             GroupName="ModeGroup" Foreground="#E2E8F0"/>
-                                <RadioButton Content="Full (Bit-for-Bit Sequential Hash)"
-                                             IsChecked="{Binding SelectedMode, Converter={x:Static conv:EnumToBooleanConverter.Instance}, ConverterParameter={x:Static core:VerificationMode.Full}}"
-                                             GroupName="ModeGroup" Foreground="#E2E8F0"/>
+                                <RadioButton IsChecked="{Binding SelectedMode, Converter={x:Static conv:EnumToBooleanConverter.Instance}, ConverterParameter={x:Static core:VerificationMode.SuperFast}}"
+                                             GroupName="ModeGroup" Foreground="#E2E8F0">
+                                    <ToolTip.Tip>
+                                        <StackPanel MaxWidth="340" Spacing="4">
+                                            <TextBlock Text="Super-Fast Mode" FontWeight="Bold" FontSize="12" Foreground="#38BDF8"/>
+                                            <TextBlock Text="Instant metadata verification. Compares relative file path, exact file size in bytes, and last-modified timestamps without reading file contents from disk. Ideal for rapid sanity checks when storage I/O speed is severely limited."
+                                                       TextWrapping="Wrap" FontSize="11" Foreground="#CBD5E1"/>
+                                        </StackPanel>
+                                    </ToolTip.Tip>
+                                    <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                        <TextBlock Text="Super-Fast" VerticalAlignment="Center"/>
+                                        <Border Width="15" Height="15" CornerRadius="7.5"
+                                                Background="#1E293B" BorderBrush="#475569" BorderThickness="1"
+                                                VerticalAlignment="Center">
+                                            <TextBlock Text="i" FontSize="10" FontWeight="Bold" FontFamily="Courier New, monospace"
+                                                       Foreground="#94A3B8" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                       Margin="0,-1,0,0"/>
+                                        </Border>
+                                    </StackPanel>
+                                </RadioButton>
+
+                                <RadioButton IsChecked="{Binding SelectedMode, Converter={x:Static conv:EnumToBooleanConverter.Instance}, ConverterParameter={x:Static core:VerificationMode.Quick}}"
+                                             GroupName="ModeGroup" Foreground="#E2E8F0">
+                                    <ToolTip.Tip>
+                                        <StackPanel MaxWidth="340" Spacing="4">
+                                            <TextBlock Text="Quick Mode" FontWeight="Bold" FontSize="12" Foreground="#38BDF8"/>
+                                            <TextBlock Text="High-speed boundary checksum verification. Validates file size and computes fast 64 KB xxHash3 checksums at the start (head) and end (tail) of each file (128 KB total read per file). Detects truncated files, missing metadata, and transfer cutoffs with minimal disk reads."
+                                                       TextWrapping="Wrap" FontSize="11" Foreground="#CBD5E1"/>
+                                        </StackPanel>
+                                    </ToolTip.Tip>
+                                    <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                        <TextBlock Text="Quick" VerticalAlignment="Center"/>
+                                        <Border Width="15" Height="15" CornerRadius="7.5"
+                                                Background="#1E293B" BorderBrush="#475569" BorderThickness="1"
+                                                VerticalAlignment="Center">
+                                            <TextBlock Text="i" FontSize="10" FontWeight="Bold" FontFamily="Courier New, monospace"
+                                                       Foreground="#94A3B8" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                       Margin="0,-1,0,0"/>
+                                        </Border>
+                                    </StackPanel>
+                                </RadioButton>
+
+                                <RadioButton IsChecked="{Binding SelectedMode, Converter={x:Static conv:EnumToBooleanConverter.Instance}, ConverterParameter={x:Static core:VerificationMode.Deep}}"
+                                             GroupName="ModeGroup" Foreground="#E2E8F0">
+                                    <ToolTip.Tip>
+                                        <StackPanel MaxWidth="340" Spacing="4">
+                                            <TextBlock Text="Deep Probe Mode" FontWeight="Bold" FontSize="12" Foreground="#38BDF8"/>
+                                            <TextBlock Text="Dynamic scale-adaptive multi-point sampling. Reads 100% of files under 4 MB sequentially. For RAW photos (4-128 MB), samples head, tail, and three 256 KB interior slices at 25%, 50%, and 75%. For video files (>128 MB), samples head, tail, and seven 1 MB interior slices from 10% to 90%. Catches interior write corruptions and bit rot while saving 95% to 99.9% of full disk I/O."
+                                                       TextWrapping="Wrap" FontSize="11" Foreground="#CBD5E1"/>
+                                        </StackPanel>
+                                    </ToolTip.Tip>
+                                    <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                        <TextBlock Text="Deep Probe" VerticalAlignment="Center"/>
+                                        <Border Width="15" Height="15" CornerRadius="7.5"
+                                                Background="#1E293B" BorderBrush="#475569" BorderThickness="1"
+                                                VerticalAlignment="Center">
+                                            <TextBlock Text="i" FontSize="10" FontWeight="Bold" FontFamily="Courier New, monospace"
+                                                       Foreground="#94A3B8" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                       Margin="0,-1,0,0"/>
+                                        </Border>
+                                    </StackPanel>
+                                </RadioButton>
+
+                                <RadioButton IsChecked="{Binding SelectedMode, Converter={x:Static conv:EnumToBooleanConverter.Instance}, ConverterParameter={x:Static core:VerificationMode.Full}}"
+                                             GroupName="ModeGroup" Foreground="#E2E8F0">
+                                    <ToolTip.Tip>
+                                        <StackPanel MaxWidth="340" Spacing="4">
+                                            <TextBlock Text="Full Verification Mode" FontWeight="Bold" FontSize="12" Foreground="#38BDF8"/>
+                                            <TextBlock Text="Exhaustive bit-for-bit sequential verification. Reads 100% of every file from start to finish using asynchronous 4 MB double-buffering and xxHash3 to guarantee complete archival integrity. Uses fast-path candidate qualification and early 64 KB head aborts to minimize redundant reads on mismatches."
+                                                       TextWrapping="Wrap" FontSize="11" Foreground="#CBD5E1"/>
+                                        </StackPanel>
+                                    </ToolTip.Tip>
+                                    <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                        <TextBlock Text="Full" VerticalAlignment="Center"/>
+                                        <Border Width="15" Height="15" CornerRadius="7.5"
+                                                Background="#1E293B" BorderBrush="#475569" BorderThickness="1"
+                                                VerticalAlignment="Center">
+                                            <TextBlock Text="i" FontSize="10" FontWeight="Bold" FontFamily="Courier New, monospace"
+                                                       Foreground="#94A3B8" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                       Margin="0,-1,0,0"/>
+                                        </Border>
+                                    </StackPanel>
+                                </RadioButton>
                             </StackPanel>
                         </StackPanel>
 
