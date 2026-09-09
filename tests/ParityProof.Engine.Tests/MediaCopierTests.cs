@@ -174,6 +174,63 @@ public sealed class MediaCopierTests : IDisposable
         Assert.Equal(payload, File.ReadAllBytes(dst1FilePath));
     }
 
+    [Fact]
+    public async Task CopyMissingFilesAsync_SourceAndDestinationAreIdentical_ThrowsInvalidOperationExceptionAndPreservesSource()
+    {
+        string srcDir = Path.Combine(_testDir, "src_overlap");
+        Directory.CreateDirectory(srcDir);
+
+        string fileName = "SOURCE_FILE.CR3";
+        string srcFilePath = Path.Combine(srcDir, fileName);
+        byte[] payload = new byte[64 * 1024];
+        Random.Shared.NextBytes(payload);
+        File.WriteAllBytes(srcFilePath, payload);
+
+        MediaFile mediaFile = new(
+            RelativePath: fileName,
+            FullPath: srcFilePath,
+            FileLength: payload.Length,
+            LastWriteTimeUtc: DateTime.UtcNow,
+            Category: MediaCategory.PhotoRaw);
+
+        // Destination root is set to the source directory itself!
+        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await _copier.CopyMissingFilesAsync(
+                new[] { mediaFile },
+                srcDir);
+        });
+
+        Assert.Contains("Safety violation", ex.Message);
+        // Original file must NOT be deleted or truncated!
+        Assert.True(File.Exists(srcFilePath));
+        Assert.Equal(payload.Length, new FileInfo(srcFilePath).Length);
+        Assert.Equal(payload, File.ReadAllBytes(srcFilePath));
+    }
+
+    [Theory]
+    [InlineData("/volume/card", "/volume/card", false)]
+    [InlineData("/volume/card/", "/volume/card", false)]
+    [InlineData("/volume/card", "/volume/card/subbackup", false)]
+    [InlineData("/volume/card/subfolder", "/volume/card", false)]
+    [InlineData("/volume/card", "/volume/backup_drive", true)]
+    public void TryValidateSourceAndDestinationPaths_ValidatesOverlapCorrectly(
+        string source,
+        string destination,
+        bool expectedValid)
+    {
+        bool isValid = ParityProof.App.ViewModels.MainViewModel.TryValidateSourceAndDestinationPaths(
+            source,
+            destination,
+            out string validationError);
+
+        Assert.Equal(expectedValid, isValid);
+        if (!expectedValid)
+        {
+            Assert.NotEmpty(validationError);
+        }
+    }
+
     public void Dispose()
     {
         try

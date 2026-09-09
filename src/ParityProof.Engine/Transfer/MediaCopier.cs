@@ -102,6 +102,14 @@ public sealed class MediaCopier : IMediaCopier
                 foreach (string destRoot in activeDestPaths)
                 {
                     string path = Path.Combine(destRoot, file.RelativePath);
+                    string canonicalSource = Path.GetFullPath(file.FullPath);
+                    string canonicalDest = Path.GetFullPath(path);
+                    if (string.Equals(canonicalSource, canonicalDest, StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new InvalidOperationException(
+                            $"Safety violation: Source and destination file path are identical: '{file.FullPath}'");
+                    }
+
                     FileInfo existingInfo = new(path);
                     if (existingInfo.Exists && existingInfo.Length == file.FileLength)
                     {

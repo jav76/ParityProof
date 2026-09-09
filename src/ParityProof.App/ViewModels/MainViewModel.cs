@@ -579,6 +579,55 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         ActiveTab = tabName;
     }
 
+    public static bool TryValidateSourceAndDestinationPaths(
+        string? sourcePath,
+        string? destinationPath,
+        out string validationError)
+    {
+        validationError = string.Empty;
+        if (string.IsNullOrWhiteSpace(sourcePath) || string.IsNullOrWhiteSpace(destinationPath))
+        {
+            return true;
+        }
+
+        string canonicalSource;
+        string canonicalDest;
+        try
+        {
+            canonicalSource = Path.GetFullPath(sourcePath.Trim())
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            canonicalDest = Path.GetFullPath(destinationPath.Trim())
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
+        catch (Exception ex)
+        {
+            validationError = $"Invalid path format: {ex.Message}";
+            return false;
+        }
+
+        if (string.Equals(canonicalSource, canonicalDest, StringComparison.OrdinalIgnoreCase))
+        {
+            validationError = "Destination path cannot be identical to the source storage path.";
+            return false;
+        }
+
+        string sourceWithSlash = canonicalSource + Path.DirectorySeparatorChar;
+        if (canonicalDest.StartsWith(sourceWithSlash, StringComparison.OrdinalIgnoreCase))
+        {
+            validationError = "Destination path cannot be located inside the source storage path.";
+            return false;
+        }
+
+        string destWithSlash = canonicalDest + Path.DirectorySeparatorChar;
+        if (canonicalSource.StartsWith(destWithSlash, StringComparison.OrdinalIgnoreCase))
+        {
+            validationError = "Source storage path cannot be located inside the destination path.";
+            return false;
+        }
+
+        return true;
+    }
+
     [RelayCommand]
     private void AddDestination(string? path)
     {
@@ -588,6 +637,36 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         }
 
         string trimmed = path.Trim();
+        if (!TryValidateSourceAndDestinationPaths(SourcePath, trimmed, out string validationError))
+        {
+            StatusMessage = validationError;
+            return;
+        }
+
+        string canonicalDest;
+        try
+        {
+            canonicalDest = Path.GetFullPath(trimmed)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Invalid path: {ex.Message}";
+            return;
+        }
+
+        bool isDuplicate = Destinations.Any(d =>
+            string.Equals(
+                Path.GetFullPath(d.RootPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                canonicalDest,
+                StringComparison.OrdinalIgnoreCase));
+
+        if (isDuplicate)
+        {
+            StatusMessage = "Destination path has already been added.";
+            return;
+        }
+
         string id = "dest_" + (Destinations.Count + 1);
         string name = Path.GetFileName(trimmed.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
         if (string.IsNullOrEmpty(name))
@@ -694,6 +773,15 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         {
             StatusMessage = "Please add at least one backup destination.";
             return;
+        }
+
+        foreach (BackupDestinationViewModel dest in Destinations.Where(d => d.IsEnabled))
+        {
+            if (!TryValidateSourceAndDestinationPaths(trimmedSource, dest.RootPath, out string validationError))
+            {
+                StatusMessage = $"Destination '{dest.Name}' conflict: {validationError}";
+                return;
+            }
         }
 
         SourcePath = trimmedSource;
@@ -1198,6 +1286,15 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         {
             StatusMessage = "No active backup destinations enabled to copy to.";
             return;
+        }
+
+        foreach (BackupDestinationViewModel dest in activeDestinations)
+        {
+            if (!TryValidateSourceAndDestinationPaths(SourcePath, dest.RootPath, out string validationError))
+            {
+                StatusMessage = $"Cannot copy to '{dest.Name}': {validationError}";
+                return;
+            }
         }
 
         List<MediaFile> missingFiles = _lastResults
