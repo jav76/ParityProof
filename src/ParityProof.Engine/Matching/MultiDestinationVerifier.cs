@@ -110,7 +110,7 @@ public sealed class MultiDestinationVerifier : IVerificationEngine
                 PartiallyVerifiedFiles: 0,
                 MissingFiles: 0,
                 CorruptFiles: 0,
-                SafetyStatus: OverallSafetyStatus.SafeToFormat,
+                SafetyStatus: OverallSafetyStatus.NoMediaFound,
                 Duration: stopwatch.Elapsed);
 
             return (emptySummary, Array.Empty<VerificationResultItem>());
@@ -647,7 +647,11 @@ public sealed class MultiDestinationVerifier : IVerificationEngine
         List<VerificationResultItem> results = resultArray.ToList();
 
         OverallSafetyStatus overallStatus;
-        if (corruptCount > 0 || missingCount > 0)
+        if (totalFiles == 0)
+        {
+            overallStatus = OverallSafetyStatus.NoMediaFound;
+        }
+        else if (corruptCount > 0 || missingCount > 0)
         {
             overallStatus = (fullyVerifiedCount > 0 || partiallyVerifiedCount > 0)
                 ? OverallSafetyStatus.PartiallyBackedUp
@@ -657,9 +661,13 @@ public sealed class MultiDestinationVerifier : IVerificationEngine
         {
             overallStatus = OverallSafetyStatus.PartiallyBackedUp;
         }
-        else
+        else if (fullyVerifiedCount == totalFiles && totalFiles > 0)
         {
             overallStatus = OverallSafetyStatus.SafeToFormat;
+        }
+        else
+        {
+            overallStatus = OverallSafetyStatus.UnsafeToFormat;
         }
 
         DuplicateAnalysisResult? duplicateAnalysis = null;

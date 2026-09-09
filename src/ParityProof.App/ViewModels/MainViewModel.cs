@@ -939,6 +939,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
             {
                 OverallSafetyStatus.SafeToFormat => "SAFE TO FORMAT - 100% BACKED UP",
                 OverallSafetyStatus.PartiallyBackedUp => "PARTIALLY BACKED UP - ACTION REQUIRED",
+                OverallSafetyStatus.NoMediaFound => "NO MEDIA DETECTED - DO NOT FORMAT",
                 _ => "UNSAFE TO FORMAT - MISSING FILES"
             };
 
@@ -946,6 +947,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
             {
                 OverallSafetyStatus.SafeToFormat => COLOR_SAFE,
                 OverallSafetyStatus.PartiallyBackedUp => COLOR_PARTIAL,
+                OverallSafetyStatus.NoMediaFound => "#64748B",
                 _ => COLOR_UNSAFE
             };
 
@@ -985,6 +987,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
             {
                 OverallSafetyStatus.SafeToFormat => COLOR_SAFE,
                 OverallSafetyStatus.PartiallyBackedUp => COLOR_PARTIAL,
+                OverallSafetyStatus.NoMediaFound => "#64748B",
                 _ => COLOR_UNSAFE
             };
             StateBadgeText = "FINISHED";

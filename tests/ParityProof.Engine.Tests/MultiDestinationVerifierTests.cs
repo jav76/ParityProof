@@ -328,6 +328,31 @@ public sealed class MultiDestinationVerifierTests : IDisposable
         Assert.NotEmpty(reportedProgress);
     }
 
+    [Fact]
+    public async Task VerifyAsync_EmptySourceDirectory_ReturnsNoMediaFound_NeverSafeToFormat()
+    {
+        string emptyCardDir = Path.Combine(_testDir, "card_empty_qa003");
+        string backupDir = Path.Combine(_testDir, "backup_qa003");
+        Directory.CreateDirectory(emptyCardDir);
+        Directory.CreateDirectory(backupDir);
+
+        List<BackupDestination> destinations = new()
+        {
+            new BackupDestination("backup", "Backup Drive", backupDir)
+        };
+
+        (VerificationSummary summary, IReadOnlyList<VerificationResultItem> results) = await _verifier.VerifyAsync(
+            emptyCardDir,
+            destinations,
+            VerificationMode.Quick,
+            FilterPreset.PhotosOnly);
+
+        Assert.Equal(0, summary.TotalFiles);
+        Assert.Equal(OverallSafetyStatus.NoMediaFound, summary.SafetyStatus);
+        Assert.NotEqual(OverallSafetyStatus.SafeToFormat, summary.SafetyStatus);
+        Assert.Empty(results);
+    }
+
     public void Dispose()
     {
         try

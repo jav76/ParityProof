@@ -28,6 +28,7 @@ public sealed class HtmlReportGenerator : IReportGenerator
         {
             OverallSafetyStatus.SafeToFormat => "#059669",
             OverallSafetyStatus.PartiallyBackedUp => "#d97706",
+            OverallSafetyStatus.NoMediaFound => "#64748b",
             _ => "#dc2626"
         };
 
@@ -35,6 +36,7 @@ public sealed class HtmlReportGenerator : IReportGenerator
         {
             OverallSafetyStatus.SafeToFormat => "SAFE TO FORMAT - ALL MEDIA VERIFIED",
             OverallSafetyStatus.PartiallyBackedUp => "PARTIALLY BACKED UP - ATTENTION REQUIRED",
+            OverallSafetyStatus.NoMediaFound => "NO MEDIA DETECTED - DO NOT FORMAT",
             _ => "UNSAFE TO FORMAT - MISSING MEDIA"
         };
 

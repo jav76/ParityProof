@@ -4,5 +4,6 @@ public enum OverallSafetyStatus
 {
     SafeToFormat,
     PartiallyBackedUp,
-    UnsafeToFormat
+    UnsafeToFormat,
+    NoMediaFound
 }
