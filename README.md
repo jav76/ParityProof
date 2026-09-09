@@ -93,6 +93,10 @@ ParityProof recognizes virtually all modern camera and video formats out of the 
 
 ---
 
+## Screenshots
+
+![ParityProof User Interface](resources/screenshots/UI_screenshots_1.png)
+
 ## Technical Highlights (Under the Hood)
 
 For DITs, systems engineers, and technical creators who want to know how ParityProof delivers its speed:
