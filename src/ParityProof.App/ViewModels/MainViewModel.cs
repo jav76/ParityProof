@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -237,6 +238,112 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     public ObservableCollection<MediaItemViewModel> FilteredItems { get; } = new();
     public ObservableCollection<DuplicateGroupViewModel> AllDuplicateGroups { get; } = new();
     public ObservableCollection<DuplicateGroupViewModel> FilteredDuplicateGroups { get; } = new();
+
+    [ObservableProperty]
+    private MediaItemViewModel? _selectedMediaItem;
+
+    partial void OnSelectedMediaItemChanged(MediaItemViewModel? value)
+    {
+        if (value is null)
+        {
+            IsInspectorOpen = false;
+            InspectorThumbnail?.Dispose();
+            InspectorThumbnail = null;
+            InspectorMetadata = ExifMetadataInfo.Empty;
+        }
+        else
+        {
+            IsInspectorOpen = true;
+            _ = LoadInspectorDetailsAsync(value);
+        }
+    }
+
+    [ObservableProperty]
+    private bool _isInspectorOpen;
+
+    [ObservableProperty]
+    private Bitmap? _inspectorThumbnail;
+
+    [ObservableProperty]
+    private bool _isLoadingThumbnail;
+
+    [ObservableProperty]
+    private ExifMetadataInfo _inspectorMetadata = ExifMetadataInfo.Empty;
+
+    private CancellationTokenSource? _thumbnailCts;
+
+    private async Task LoadInspectorDetailsAsync(MediaItemViewModel item)
+    {
+        _thumbnailCts?.Cancel();
+        _thumbnailCts?.Dispose();
+        _thumbnailCts = new CancellationTokenSource();
+        CancellationToken ct = _thumbnailCts.Token;
+
+        IsLoadingThumbnail = true;
+        InspectorThumbnail?.Dispose();
+        InspectorThumbnail = null;
+        InspectorMetadata = ExifMetadataInfo.Empty;
+
+        string filePath = item.FullPath;
+
+        try
+        {
+            ExifMetadataInfo metadata = await Task.Run(
+                () => ExifMetadataExtractor.ExtractMetadata(filePath),
+                ct).ConfigureAwait(true);
+
+            if (ct.IsCancellationRequested)
+            {
+                return;
+            }
+
+            InspectorMetadata = metadata;
+
+            byte[]? thumbBytes = await Task.Run(
+                () => ExifMetadataExtractor.ExtractThumbnailBytes(filePath),
+                ct).ConfigureAwait(true);
+
+            if (ct.IsCancellationRequested)
+            {
+                return;
+            }
+
+            if (thumbBytes is not null && thumbBytes.Length > 0)
+            {
+                using MemoryStream ms = new(thumbBytes);
+                Bitmap bitmap = Bitmap.DecodeToWidth(ms, 360);
+                if (ct.IsCancellationRequested)
+                {
+                    bitmap.Dispose();
+                    return;
+                }
+                InspectorThumbnail = bitmap;
+            }
+        }
+        catch
+        {
+            // Silently suppress thumbnail extraction failures
+        }
+        finally
+        {
+            if (!ct.IsCancellationRequested)
+            {
+                IsLoadingThumbnail = false;
+            }
+        }
+    }
+
+    [RelayCommand]
+    private void CloseInspector()
+    {
+        IsInspectorOpen = false;
+    }
+
+    [RelayCommand]
+    private void ToggleInspector()
+    {
+        IsInspectorOpen = !IsInspectorOpen;
+    }
 
     public MainViewModel()
     {
@@ -672,6 +779,20 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
             BatchProgressSummaryText = $"100% ({summary.TotalFiles} / {summary.TotalFiles})";
 
             ApplyFilter();
+
+            // Refresh destination capacities and check for potential space exhaustion
+            long missingBytes = results
+                .Where(r => !r.IsFullyVerified)
+                .Sum(r => r.SourceFile.FileLength);
+
+            foreach (BackupDestinationViewModel dest in Destinations)
+            {
+                dest.RefreshCapacity();
+                if (HasMissingFiles)
+                {
+                    dest.CheckRequiredSpace(missingBytes);
+                }
+            }
         }
         catch (OperationCanceledException)
         {
@@ -845,21 +966,29 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
                     return DuplicateAnalysisResult.Empty;
                 }
 
-                Dictionary<string, IReadOnlyList<MediaFile>> destinationFiles = new();
-                foreach (BackupDestination dest in destinationModels)
-                {
-                    _cts.Token.ThrowIfCancellationRequested();
-                    IReadOnlyList<MediaFile> files = await FastDirectoryScanner.ScanDirectoryAsync(
-                        dest.RootPath,
-                        SelectedPreset,
-                        phaseName: $"Indexing: {dest.Name}",
-                        referenceTotalFiles: 0,
-                        referenceTotalBytes: 0,
-                        progress: progress,
-                        cancellationToken: _cts.Token,
-                        pauseToken: _pauseTokenSource.Token).ConfigureAwait(false);
+                Task<(string Id, IReadOnlyList<MediaFile> Files)>[] destScanTasks = destinationModels
+                    .Select(async dest =>
+                    {
+                        IReadOnlyList<MediaFile> files = await FastDirectoryScanner.ScanDirectoryAsync(
+                            dest.RootPath,
+                            SelectedPreset,
+                            phaseName: $"Indexing: {dest.Name}",
+                            referenceTotalFiles: 0,
+                            referenceTotalBytes: 0,
+                            progress: progress,
+                            cancellationToken: _cts.Token,
+                            pauseToken: _pauseTokenSource.Token).ConfigureAwait(false);
+                        return (dest.Id, files);
+                    })
+                    .ToArray();
 
-                    destinationFiles[dest.Id] = files;
+                (string Id, IReadOnlyList<MediaFile> Files)[] scannedResults =
+                    await Task.WhenAll(destScanTasks).ConfigureAwait(false);
+
+                Dictionary<string, IReadOnlyList<MediaFile>> destinationFiles = new();
+                foreach ((string destId, IReadOnlyList<MediaFile> files) in scannedResults)
+                {
+                    destinationFiles[destId] = files;
                 }
 
                 return await _duplicateAnalyzer.AnalyzeDuplicatesAsync(
@@ -936,10 +1065,10 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        BackupDestinationViewModel? primaryDest = Destinations.FirstOrDefault(d => d.IsEnabled);
-        if (primaryDest is null)
+        List<BackupDestinationViewModel> activeDestinations = Destinations.Where(d => d.IsEnabled).ToList();
+        if (activeDestinations.Count == 0)
         {
-            StatusMessage = "No active destination to copy to.";
+            StatusMessage = "No active backup destinations enabled to copy to.";
             return;
         }
 
@@ -952,6 +1081,19 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         {
             StatusMessage = "No missing files to copy.";
             return;
+        }
+
+        long requiredBytes = missingFiles.Sum(f => f.FileLength);
+        foreach (BackupDestinationViewModel dest in activeDestinations)
+        {
+            dest.RefreshCapacity();
+            dest.CheckRequiredSpace(requiredBytes);
+        }
+
+        BackupDestinationViewModel? overflowDest = activeDestinations.FirstOrDefault(d => d.HasCapacityWarning);
+        if (overflowDest is not null)
+        {
+            StatusMessage = $"Warning: '{overflowDest.Name}' has low space ({overflowDest.CapacityWarningText}).";
         }
 
         IsCopying = true;
@@ -1038,10 +1180,10 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
                 EtaText = $"{p.EstimatedTimeRemaining:mm\\:ss}";
             });
 
-            // Offload to background thread pool to ensure UI Dispatcher never blocks during file transfer
+            List<string> targetPaths = activeDestinations.Select(d => d.RootPath).ToList();
             int copiedCount = await Task.Run(() => _mediaCopier.CopyMissingFilesAsync(
                 missingFiles,
-                primaryDest.RootPath,
+                targetPaths,
                 copyProgress,
                 _cts.Token,
                 _pauseTokenSource.Token)).ConfigureAwait(true);
@@ -1135,5 +1277,8 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         _driveDetector.DriveChanged -= OnDriveChanged;
         _driveDetector.Dispose();
         _cts?.Dispose();
+        _thumbnailCts?.Cancel();
+        _thumbnailCts?.Dispose();
+        InspectorThumbnail?.Dispose();
     }
 }

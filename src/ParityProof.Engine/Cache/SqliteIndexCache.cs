@@ -73,18 +73,21 @@ public sealed class SqliteIndexCache : IIndexCache
                     DeepHash INTEGER,
                     FullHash INTEGER
                 );
-                CREATE INDEX IF NOT EXISTS IX_MediaCache_Length ON MediaCache(FileLength);";
+                CREATE INDEX IF NOT EXISTS IX_MediaCache_Length ON MediaCache(FileLength);
+                CREATE INDEX IF NOT EXISTS IX_MediaCache_Lookup ON MediaCache(FilePath, LastWriteTimeUtc, FileLength);";
             await tableCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
             try
             {
                 await using SqliteCommand alterCmd = connection.CreateCommand();
-                alterCmd.CommandText = "ALTER TABLE MediaCache ADD COLUMN DeepHash INTEGER;";
+                alterCmd.CommandText = @"
+                    ALTER TABLE MediaCache ADD COLUMN DeepHash INTEGER;
+                    CREATE INDEX IF NOT EXISTS IX_MediaCache_Lookup ON MediaCache(FilePath, LastWriteTimeUtc, FileLength);";
                 await alterCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             }
             catch (SqliteException)
             {
-                // Column already exists or table was just created with it
+                // Column or index already exists or table was just created with it
             }
 
             _initialized = true;

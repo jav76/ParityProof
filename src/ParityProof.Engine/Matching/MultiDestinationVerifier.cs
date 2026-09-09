@@ -63,7 +63,8 @@ public sealed class MultiDestinationVerifier : IVerificationEngine
             TotalBytes: 0,
             Phase: "Scanning Source Directory..."));
 
-        IReadOnlyList<MediaFile> sourceFiles = await FastDirectoryScanner.ScanDirectoryAsync(
+        // Launch concurrent directory scans across source media and all active backup targets simultaneously
+        Task<IReadOnlyList<MediaFile>> sourceScanTask = FastDirectoryScanner.ScanDirectoryAsync(
             sourcePath,
             filterPreset,
             phaseName: "Scanning Source Directory",
@@ -71,8 +72,28 @@ public sealed class MultiDestinationVerifier : IVerificationEngine
             referenceTotalBytes: 0,
             progress: progress,
             cancellationToken: cancellationToken,
-            pauseToken: pauseToken).ConfigureAwait(false);
+            pauseToken: pauseToken);
 
+        List<BackupDestination> activeDestinations = destinations.Where(d => d.IsEnabled).ToList();
+        Task<(BackupDestination Dest, IReadOnlyList<MediaFile> Files)>[] destScanTasks = activeDestinations
+            .Select(async dest =>
+            {
+                IReadOnlyList<MediaFile> files = await FastDirectoryScanner.ScanDirectoryAsync(
+                    dest.RootPath,
+                    filterPreset,
+                    phaseName: $"Scanning: {dest.Name}",
+                    referenceTotalFiles: 0,
+                    referenceTotalBytes: 0,
+                    progress: progress,
+                    cancellationToken: cancellationToken,
+                    pauseToken: pauseToken).ConfigureAwait(false);
+                return (dest, files);
+            })
+            .ToArray();
+
+        await Task.WhenAll(destScanTasks.Cast<Task>().Append(sourceScanTask)).ConfigureAwait(false);
+
+        IReadOnlyList<MediaFile> sourceFiles = await sourceScanTask.ConfigureAwait(false);
         long totalBytes = sourceFiles.Sum(f => f.FileLength);
         int totalFiles = sourceFiles.Count;
 
@@ -95,49 +116,38 @@ public sealed class MultiDestinationVerifier : IVerificationEngine
             return (emptySummary, Array.Empty<VerificationResultItem>());
         }
 
-        List<BackupDestination> activeDestinations = destinations.Where(d => d.IsEnabled).ToList();
         Dictionary<string, Dictionary<long, List<MediaFile>>> destinationIndexes = new();
         Dictionary<string, IReadOnlyList<MediaFile>> allDestinationFiles = new();
         ConcurrentDictionary<string, MediaFile> inMemoryCache = new(StringComparer.OrdinalIgnoreCase);
 
-        // Pre-fetch source files batch from SQLite cache upfront
-        if (_cache is not null && sourceFiles.Count > 0)
-        {
-            IReadOnlyDictionary<string, MediaFile> cachedSourceFiles =
-                await _cache.GetBatchAsync(sourceFiles, cancellationToken).ConfigureAwait(false);
+        // Gather destination scan results
+        (BackupDestination Dest, IReadOnlyList<MediaFile> Files)[] destScanResults =
+            await Task.WhenAll(destScanTasks).ConfigureAwait(false);
 
-            foreach (KeyValuePair<string, MediaFile> kvp in cachedSourceFiles)
+        List<MediaFile> allScannedFiles = new(sourceFiles.Count);
+        allScannedFiles.AddRange(sourceFiles);
+
+        foreach ((BackupDestination dest, IReadOnlyList<MediaFile> files) in destScanResults)
+        {
+            allDestinationFiles[dest.Id] = files;
+            allScannedFiles.AddRange(files);
+        }
+
+        // Consolidated batch pre-fetch from SQLite cache for all scanned source and destination media files
+        if (_cache is not null && allScannedFiles.Count > 0)
+        {
+            IReadOnlyDictionary<string, MediaFile> cachedEntries =
+                await _cache.GetBatchAsync(allScannedFiles, cancellationToken).ConfigureAwait(false);
+
+            foreach (KeyValuePair<string, MediaFile> kvp in cachedEntries)
             {
                 inMemoryCache[kvp.Key] = kvp.Value;
             }
         }
 
-        foreach (BackupDestination dest in activeDestinations)
+        // Build length-partitioned candidate lookup buckets for each active destination
+        foreach ((BackupDestination dest, IReadOnlyList<MediaFile> destFiles) in destScanResults)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            IReadOnlyList<MediaFile> destFiles = await FastDirectoryScanner.ScanDirectoryAsync(
-                dest.RootPath,
-                filterPreset,
-                phaseName: $"Indexing Destination: {dest.Name}",
-                referenceTotalFiles: 0,
-                referenceTotalBytes: 0,
-                progress: progress,
-                cancellationToken: cancellationToken,
-                pauseToken: pauseToken).ConfigureAwait(false);
-
-            allDestinationFiles[dest.Id] = destFiles;
-
-            IReadOnlyDictionary<string, MediaFile>? cachedHashes = null;
-            if (_cache is not null && destFiles.Count > 0)
-            {
-                cachedHashes = await _cache.GetBatchAsync(destFiles, cancellationToken).ConfigureAwait(false);
-                foreach (KeyValuePair<string, MediaFile> kvp in cachedHashes)
-                {
-                    inMemoryCache[kvp.Key] = kvp.Value;
-                }
-            }
-
             Dictionary<long, List<MediaFile>> indexByLength = new();
             foreach (MediaFile df in destFiles)
             {
@@ -487,6 +497,7 @@ public sealed class MultiDestinationVerifier : IVerificationEngine
                         destinationIndexes[d.Id].ContainsKey(sourceFile.FileLength));
 
                     Dictionary<string, FileMatchStatus> statuses = new();
+                    MediaFile finalSourceFile = sourceFile;
 
                     if (!hasAnyCandidate)
                     {
@@ -523,6 +534,8 @@ public sealed class MultiDestinationVerifier : IVerificationEngine
                             }
                         }
 
+                        finalSourceFile = hydratedSource;
+
                         // Dispatch parallel candidate matches across all active destinations concurrently
                         Task<FileMatchStatus>[] matchTasks = activeDestinations.Select(async dest =>
                         {
@@ -556,7 +569,18 @@ public sealed class MultiDestinationVerifier : IVerificationEngine
                         }
                     }
 
-                    resultArray[index] = new VerificationResultItem(sourceFile, statuses);
+                    if (inMemoryCache.TryGetValue(finalSourceFile.FullPath, out MediaFile? cachedSource))
+                    {
+                        finalSourceFile = finalSourceFile with
+                        {
+                            HeadHash = finalSourceFile.HeadHash ?? cachedSource.HeadHash,
+                            TailHash = finalSourceFile.TailHash ?? cachedSource.TailHash,
+                            DeepHash = finalSourceFile.DeepHash ?? cachedSource.DeepHash,
+                            FullHash = finalSourceFile.FullHash ?? cachedSource.FullHash
+                        };
+                    }
+
+                    resultArray[index] = new VerificationResultItem(finalSourceFile, statuses);
                     Interlocked.Increment(ref processedFilesCount);
                     Interlocked.Add(ref processedBytesCount, sourceFile.FileLength);
                 }).ConfigureAwait(false);

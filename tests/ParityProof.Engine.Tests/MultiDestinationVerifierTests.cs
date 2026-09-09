@@ -71,6 +71,10 @@ public sealed class MultiDestinationVerifierTests : IDisposable
         Assert.Equal(0, summary.MissingFiles);
         Assert.Equal(OverallSafetyStatus.PartiallyBackedUp, summary.SafetyStatus);
         Assert.Equal(3, results.Count);
+        Assert.All(results, item => Assert.NotNull(item.SourceFile.HeadHash));
+        Assert.All(results, item => Assert.NotNull(item.SourceFile.TailHash));
+        Assert.NotNull(results[0].DestinationStatuses["ssd"].DestinationHeadHash);
+        Assert.NotNull(results[0].DestinationStatuses["ssd"].DestinationTailHash);
 
         // Now add the missing file to NAS and verify again
         File.WriteAllBytes(Path.Combine(nasDir, "IMG_0003.CR3"), img3);

@@ -63,6 +63,8 @@ public sealed class ContentAddressedMatcherTests : IDisposable
 
         Assert.Equal(MediaStatus.Verified, quickStatus.Status);
         Assert.Equal(dstPath, quickStatus.MatchedFilePath);
+        Assert.NotNull(quickStatus.DestinationHeadHash);
+        Assert.NotNull(quickStatus.DestinationTailHash);
 
         FileMatchStatus fullStatus = await _matcher.MatchFileAsync(
             srcFile,
@@ -71,6 +73,7 @@ public sealed class ContentAddressedMatcherTests : IDisposable
             VerificationMode.Full);
 
         Assert.Equal(MediaStatus.Verified, fullStatus.Status);
+        Assert.NotNull(fullStatus.DestinationFullHash);
     }
 
     [Fact]
@@ -120,6 +123,17 @@ public sealed class ContentAddressedMatcherTests : IDisposable
             VerificationMode.Quick);
 
         Assert.Equal(MediaStatus.Corrupt, quickStatus.Status);
+        Assert.NotNull(quickStatus.DestinationHeadHash);
+        Assert.NotNull(quickStatus.DestinationTailHash);
+
+        FileMatchStatus fullStatus = await _matcher.MatchFileAsync(
+            srcFile,
+            destination,
+            index,
+            VerificationMode.Full);
+
+        Assert.Equal(MediaStatus.Corrupt, fullStatus.Status);
+        Assert.NotNull(fullStatus.DestinationHeadHash);
     }
 
     [Fact]
@@ -165,6 +179,7 @@ public sealed class ContentAddressedMatcherTests : IDisposable
 
         Assert.Equal(MediaStatus.Verified, deepStatus.Status);
         Assert.Equal(dstPath, deepStatus.MatchedFilePath);
+        Assert.NotNull(deepStatus.DestinationDeepHash);
     }
 
     [Fact]
@@ -225,6 +240,7 @@ public sealed class ContentAddressedMatcherTests : IDisposable
             VerificationMode.Deep);
 
         Assert.Equal(MediaStatus.Corrupt, deepStatus.Status);
+        Assert.NotNull(deepStatus.DestinationDeepHash);
     }
 
     public void Dispose()

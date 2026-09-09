@@ -15,4 +15,11 @@ public interface IMediaCopier
         IProgress<CopyProgressInfo>? progress = null,
         CancellationToken cancellationToken = default,
         PauseToken pauseToken = default);
+
+    Task<int> CopyMissingFilesAsync(
+        IReadOnlyList<MediaFile> missingFiles,
+        IReadOnlyList<string> destinationRootPaths,
+        IProgress<CopyProgressInfo>? progress = null,
+        CancellationToken cancellationToken = default,
+        PauseToken pauseToken = default);
 }

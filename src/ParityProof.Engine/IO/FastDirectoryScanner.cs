@@ -205,9 +205,9 @@ public static class FastDirectoryScanner
                         }
 
                         string relativeDir = Path.GetRelativePath(normalizedRoot, currentDir);
-                        currentActiveFolder = string.IsNullOrEmpty(relativeDir) || relativeDir == "."
-                            ? currentDir
-                            : relativeDir;
+                        bool isRootDir = string.IsNullOrEmpty(relativeDir) || relativeDir == ".";
+                        string normalizedRelativeDir = isRootDir ? string.Empty : relativeDir.Replace('\\', '/');
+                        currentActiveFolder = isRootDir ? currentDir : normalizedRelativeDir;
 
                         List<string> subDirectoriesToEnqueue = new();
                         try
@@ -240,8 +240,9 @@ public static class FastDirectoryScanner
                                         return false;
                                     }
 
-                                    string fullPath = entry.ToFullPath();
-                                    string relativePath = Path.GetRelativePath(normalizedRoot, fullPath);
+                                    string fileName = entry.FileName.ToString();
+                                    string fullPath = Path.Combine(currentDir, fileName);
+                                    string relativePath = isRootDir ? fileName : $"{normalizedRelativeDir}/{fileName}";
                                     long fileLength = entry.Length;
                                     DateTime lastWriteTimeUtc = entry.LastWriteTimeUtc.UtcDateTime;
                                     string extString = extSpan.ToString();

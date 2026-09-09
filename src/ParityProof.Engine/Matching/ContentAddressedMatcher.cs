@@ -183,6 +183,8 @@ public sealed class ContentAddressedMatcher
         Action<long>? onDestBytesRead = null,
         CancellationToken cancellationToken = default)
     {
+        inMemoryCache ??= new ConcurrentDictionary<string, MediaFile>(StringComparer.OrdinalIgnoreCase);
+
         if (!destinationIndexByLength.TryGetValue(sourceFile.FileLength, out List<MediaFile>? candidates) ||
             candidates.Count == 0)
         {
@@ -266,20 +268,31 @@ public sealed class ContentAddressedMatcher
                         DestinationId: destination.Id,
                         DestinationRootPath: destination.RootPath,
                         Status: MediaStatus.Verified,
-                        MatchedFilePath: hydratedCandidate.FullPath);
+                        MatchedFilePath: hydratedCandidate.FullPath,
+                        DestinationHeadHash: hydratedCandidate.HeadHash,
+                        DestinationTailHash: hydratedCandidate.TailHash);
                 }
             }
 
-            bool hasSamePathCandidate = candidates.Any(c =>
+            MediaFile? samePathCandidate = candidates.FirstOrDefault(c =>
                 string.Equals(c.RelativePath, sourceFile.RelativePath, StringComparison.OrdinalIgnoreCase));
+
+            if (inMemoryCache is not null && samePathCandidate is not null &&
+                inMemoryCache.TryGetValue(samePathCandidate.FullPath, out MediaFile? cachedSamePathQuick))
+            {
+                samePathCandidate = cachedSamePathQuick;
+            }
 
             return new FileMatchStatus(
                 DestinationId: destination.Id,
                 DestinationRootPath: destination.RootPath,
-                Status: hasSamePathCandidate ? MediaStatus.Corrupt : MediaStatus.Missing,
-                FailureReason: hasSamePathCandidate
+                Status: samePathCandidate is not null ? MediaStatus.Corrupt : MediaStatus.Missing,
+                MatchedFilePath: samePathCandidate?.FullPath,
+                FailureReason: samePathCandidate is not null
                     ? "Checksum mismatch on head/tail chunks."
-                    : "No candidate matched head/tail checksum.");
+                    : "No candidate matched head/tail checksum.",
+                DestinationHeadHash: samePathCandidate?.HeadHash,
+                DestinationTailHash: samePathCandidate?.TailHash);
         }
 
         if (mode == VerificationMode.Deep)
@@ -310,20 +323,33 @@ public sealed class ContentAddressedMatcher
                         DestinationId: destination.Id,
                         DestinationRootPath: destination.RootPath,
                         Status: MediaStatus.Verified,
-                        MatchedFilePath: hydratedCandidate.FullPath);
+                        MatchedFilePath: hydratedCandidate.FullPath,
+                        DestinationHeadHash: hydratedCandidate.HeadHash,
+                        DestinationTailHash: hydratedCandidate.TailHash,
+                        DestinationDeepHash: hydratedCandidate.DeepHash);
                 }
             }
 
-            bool hasSamePathCandidate = candidates.Any(c =>
+            MediaFile? samePathCandidate = candidates.FirstOrDefault(c =>
                 string.Equals(c.RelativePath, sourceFile.RelativePath, StringComparison.OrdinalIgnoreCase));
+
+            if (inMemoryCache is not null && samePathCandidate is not null &&
+                inMemoryCache.TryGetValue(samePathCandidate.FullPath, out MediaFile? cachedSamePathDeep))
+            {
+                samePathCandidate = cachedSamePathDeep;
+            }
 
             return new FileMatchStatus(
                 DestinationId: destination.Id,
                 DestinationRootPath: destination.RootPath,
-                Status: hasSamePathCandidate ? MediaStatus.Corrupt : MediaStatus.Missing,
-                FailureReason: hasSamePathCandidate
+                Status: samePathCandidate is not null ? MediaStatus.Corrupt : MediaStatus.Missing,
+                MatchedFilePath: samePathCandidate?.FullPath,
+                FailureReason: samePathCandidate is not null
                     ? "Probe checksum mismatch across interior and boundary slices."
-                    : "No candidate matched deep probe checksum.");
+                    : "No candidate matched deep probe checksum.",
+                DestinationHeadHash: samePathCandidate?.HeadHash,
+                DestinationTailHash: samePathCandidate?.TailHash,
+                DestinationDeepHash: samePathCandidate?.DeepHash);
         }
 
         if (mode == VerificationMode.Full)
@@ -368,7 +394,10 @@ public sealed class ContentAddressedMatcher
                             DestinationId: destination.Id,
                             DestinationRootPath: destination.RootPath,
                             Status: MediaStatus.Corrupt,
-                            FailureReason: "Full file checksum mismatch detected in initial stream chunk.");
+                            MatchedFilePath: candidate.FullPath,
+                            FailureReason: "Full file checksum mismatch detected in initial stream chunk.",
+                            DestinationHeadHash: candHash.HeadHash,
+                            DestinationFullHash: candHash.FullHash);
                     }
 
                     hydratedCandidate = candidate with
@@ -398,14 +427,23 @@ public sealed class ContentAddressedMatcher
                         DestinationId: destination.Id,
                         DestinationRootPath: destination.RootPath,
                         Status: MediaStatus.Verified,
-                        MatchedFilePath: hydratedCandidate.FullPath);
+                        MatchedFilePath: hydratedCandidate.FullPath,
+                        DestinationHeadHash: hydratedCandidate.HeadHash,
+                        DestinationTailHash: hydratedCandidate.TailHash,
+                        DestinationDeepHash: hydratedCandidate.DeepHash,
+                        DestinationFullHash: hydratedCandidate.FullHash);
                 }
 
                 return new FileMatchStatus(
                     DestinationId: destination.Id,
                     DestinationRootPath: destination.RootPath,
                     Status: MediaStatus.Corrupt,
-                    FailureReason: "Full file bit-for-bit checksum mismatch.");
+                    MatchedFilePath: hydratedCandidate.FullPath,
+                    FailureReason: "Full file bit-for-bit checksum mismatch.",
+                    DestinationHeadHash: hydratedCandidate.HeadHash,
+                    DestinationTailHash: hydratedCandidate.TailHash,
+                    DestinationDeepHash: hydratedCandidate.DeepHash,
+                    DestinationFullHash: hydratedCandidate.FullHash);
             }
             else
             {
@@ -464,21 +502,36 @@ public sealed class ContentAddressedMatcher
                                 DestinationId: destination.Id,
                                 DestinationRootPath: destination.RootPath,
                                 Status: MediaStatus.Verified,
-                                MatchedFilePath: hydratedCand.FullPath);
+                                MatchedFilePath: hydratedCand.FullPath,
+                                DestinationHeadHash: hydratedCand.HeadHash,
+                                DestinationTailHash: hydratedCand.TailHash,
+                                DestinationDeepHash: hydratedCand.DeepHash,
+                                DestinationFullHash: hydratedCand.FullHash);
                         }
                     }
                 }
 
-                bool hasSamePathCandidate = candidates.Any(c =>
+                MediaFile? samePathCandidate = candidates.FirstOrDefault(c =>
                     string.Equals(c.RelativePath, sourceFile.RelativePath, StringComparison.OrdinalIgnoreCase));
+
+                if (inMemoryCache is not null && samePathCandidate is not null &&
+                    inMemoryCache.TryGetValue(samePathCandidate.FullPath, out MediaFile? cachedSamePathFull))
+                {
+                    samePathCandidate = cachedSamePathFull;
+                }
 
                 return new FileMatchStatus(
                     DestinationId: destination.Id,
                     DestinationRootPath: destination.RootPath,
-                    Status: hasSamePathCandidate ? MediaStatus.Corrupt : MediaStatus.Missing,
-                    FailureReason: hasSamePathCandidate
+                    Status: samePathCandidate is not null ? MediaStatus.Corrupt : MediaStatus.Missing,
+                    MatchedFilePath: samePathCandidate?.FullPath,
+                    FailureReason: samePathCandidate is not null
                         ? "Full file bit-for-bit checksum mismatch."
-                        : "No candidate matched full file checksum.");
+                        : "No candidate matched full file checksum.",
+                    DestinationHeadHash: samePathCandidate?.HeadHash,
+                    DestinationTailHash: samePathCandidate?.TailHash,
+                    DestinationDeepHash: samePathCandidate?.DeepHash,
+                    DestinationFullHash: samePathCandidate?.FullHash);
             }
         }
 

@@ -7,4 +7,8 @@ public sealed record FileMatchStatus(
     string DestinationRootPath,
     MediaStatus Status,
     string? MatchedFilePath = null,
-    string? FailureReason = null);
+    string? FailureReason = null,
+    ulong? DestinationHeadHash = null,
+    ulong? DestinationTailHash = null,
+    ulong? DestinationDeepHash = null,
+    ulong? DestinationFullHash = null);

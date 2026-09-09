@@ -257,18 +257,35 @@
                             <ItemsControl ItemsSource="{Binding Destinations}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate x:DataType="vm:BackupDestinationViewModel">
-                                        <Border Background="#1E293B" CornerRadius="6" Padding="10,6" Margin="0,0,0,6" BorderBrush="#334155" BorderThickness="1">
-                                            <Grid ColumnDefinitions="Auto,*,Auto">
-                                                <CheckBox Grid.Column="0" IsChecked="{Binding IsEnabled}" Margin="0,0,8,0"/>
-                                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="13" Foreground="#F8FAFC"/>
-                                                    <TextBlock Text="{Binding RootPath}" FontSize="11" Foreground="#94A3B8" TextTrimming="CharacterEllipsis"/>
+                                        <Border Background="#1E293B" CornerRadius="6" Padding="10,8" Margin="0,0,0,6" BorderBrush="#334155" BorderThickness="1">
+                                            <StackPanel Spacing="6">
+                                                <Grid ColumnDefinitions="Auto,*,Auto">
+                                                    <CheckBox Grid.Column="0" IsChecked="{Binding IsEnabled}" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="13" Foreground="#F8FAFC"/>
+                                                        <TextBlock Text="{Binding RootPath}" FontSize="11" Foreground="#94A3B8" TextTrimming="CharacterEllipsis"/>
+                                                    </StackPanel>
+                                                    <Button Grid.Column="2" Content="✕"
+                                                            Command="{Binding $parent[Window].((vm:MainViewModel)DataContext).RemoveDestinationCommand}"
+                                                            CommandParameter="{Binding}"
+                                                            Background="Transparent" Foreground="#EF4444" FontSize="12" Padding="4"/>
+                                                </Grid>
+
+                                                <!-- Capacity Gauge Strip -->
+                                                <StackPanel Spacing="3" IsVisible="{Binding HasSpaceInfo}">
+                                                    <Grid ColumnDefinitions="*,Auto">
+                                                        <TextBlock Grid.Column="0" Text="{Binding CapacityFormatted}" FontSize="10" Foreground="#94A3B8"/>
+                                                        <TextBlock Grid.Column="1" Text="{Binding CapacityUsedPercentage, StringFormat='{}{0:F0}% used'}" FontSize="10" FontWeight="SemiBold" Foreground="{Binding CapacityBarColor}"/>
+                                                    </Grid>
+                                                    <ProgressBar Value="{Binding CapacityUsedPercentage}" Maximum="100" Height="4" CornerRadius="2"
+                                                                 Foreground="{Binding CapacityBarColor}" Background="#0F172A"/>
+                                                    <!-- Low / Insufficient Space Alert -->
+                                                    <Border Background="#450A0A" BorderBrush="#EF4444" BorderThickness="1" CornerRadius="4" Padding="6,3" Margin="0,2,0,0"
+                                                            IsVisible="{Binding HasCapacityWarning}">
+                                                        <TextBlock Text="{Binding CapacityWarningText}" FontSize="10" Foreground="#FCA5A5" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                                                    </Border>
                                                 </StackPanel>
-                                                <Button Grid.Column="2" Content="✕"
-                                                        Command="{Binding $parent[Window].((vm:MainViewModel)DataContext).RemoveDestinationCommand}"
-                                                        CommandParameter="{Binding}"
-                                                        Background="Transparent" Foreground="#EF4444" FontSize="12" Padding="4"/>
-                                            </Grid>
+                                            </StackPanel>
                                         </Border>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
@@ -451,28 +468,198 @@
                                  Background="#1E293B" Foreground="#F8FAFC" BorderBrush="#334155"/>
                     </Grid>
 
-                    <!-- Media Grid (Visible when not on Duplicates Tab) -->
-                    <DataGrid Grid.Row="1" ItemsSource="{Binding FilteredItems}" AutoGenerateColumns="False"
-                              IsReadOnly="True" GridLinesVisibility="Horizontal" HeadersVisibility="Column"
-                              Background="#0B0F17" BorderBrush="#1F2937" BorderThickness="1"
-                              IsVisible="{Binding !IsDuplicatesTabActive}">
-                        <DataGrid.Columns>
-                            <DataGridTextColumn Header="File" Binding="{Binding FileName}" Width="2*"/>
-                            <DataGridTextColumn Header="Format" Binding="{Binding Extension}" Width="80"/>
-                            <DataGridTextColumn Header="Size" Binding="{Binding SizeFormatted}" Width="100"/>
-                            <DataGridTemplateColumn Header="Status" Width="120">
-                                <DataGridTemplateColumn.CellTemplate>
-                                    <DataTemplate x:DataType="vm:MediaItemViewModel">
-                                        <Border Background="{Binding StatusBadgeColor}" CornerRadius="4" Padding="6,2" HorizontalAlignment="Left">
-                                            <TextBlock Text="{Binding StatusText}" Foreground="#FFFFFF" FontSize="11" FontWeight="Bold"/>
-                                        </Border>
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                            </DataGridTemplateColumn>
-                            <DataGridTextColumn Header="Destinations" Binding="{Binding DestinationSummary}" Width="3*"/>
-                            <DataGridTextColumn Header="Relative Path" Binding="{Binding RelativePath}" Width="3*"/>
-                        </DataGrid.Columns>
-                    </DataGrid>
+                    <!-- Main Media View with Collapsible Inspector Drawer (Visible when not on Duplicates Tab) -->
+                    <Grid Grid.Row="1" ColumnDefinitions="*,Auto" IsVisible="{Binding !IsDuplicatesTabActive}">
+                        <!-- Media Grid -->
+                        <DataGrid Grid.Column="0" ItemsSource="{Binding FilteredItems}"
+                                  SelectedItem="{Binding SelectedMediaItem, Mode=TwoWay}"
+                                  AutoGenerateColumns="False"
+                                  IsReadOnly="True" GridLinesVisibility="Horizontal" HeadersVisibility="Column"
+                                  Background="#0B0F17" BorderBrush="#1F2937" BorderThickness="1">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="File" Binding="{Binding FileName}" Width="2*"/>
+                                <DataGridTextColumn Header="Format" Binding="{Binding Extension}" Width="80"/>
+                                <DataGridTextColumn Header="Size" Binding="{Binding SizeFormatted}" Width="100"/>
+                                <DataGridTemplateColumn Header="Status" Width="120">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate x:DataType="vm:MediaItemViewModel">
+                                            <Border Background="{Binding StatusBadgeColor}" CornerRadius="4" Padding="6,2" HorizontalAlignment="Left">
+                                                <TextBlock Text="{Binding StatusText}" Foreground="#FFFFFF" FontSize="11" FontWeight="Bold"/>
+                                            </Border>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTextColumn Header="Destinations" Binding="{Binding DestinationSummary}" Width="3*"/>
+                                <DataGridTextColumn Header="Relative Path" Binding="{Binding RelativePath}" Width="3*"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+
+                        <!-- Side-by-Side Inspector Drawer Panel -->
+                        <Border Grid.Column="1" Width="360" Margin="12,0,0,0"
+                                Background="#131B2E" BorderBrush="#334155" BorderThickness="1"
+                                CornerRadius="8" Padding="14"
+                                IsVisible="{Binding IsInspectorOpen}">
+                            <ScrollViewer>
+                                <StackPanel Spacing="12">
+                                    <!-- Inspector Header -->
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <StackPanel Grid.Column="0" Spacing="2">
+                                            <TextBlock Text="MEDIA INSPECTOR" FontSize="10" FontWeight="Bold" Foreground="#38BDF8" LetterSpacing="1"/>
+                                            <TextBlock Text="{Binding SelectedMediaItem.FileName}" FontSize="13" FontWeight="Bold" Foreground="#F8FAFC" TextTrimming="CharacterEllipsis"/>
+                                        </StackPanel>
+                                        <Button Grid.Column="1" Content="✕" Command="{Binding CloseInspectorCommand}"
+                                                Background="Transparent" Foreground="#94A3B8" FontSize="14" Padding="6,2" VerticalAlignment="Top"/>
+                                    </Grid>
+
+                                    <!-- Thumbnail Preview Card -->
+                                    <Border Background="#0B0F17" BorderBrush="#1E293B" BorderThickness="1" CornerRadius="6" Height="190" ClipToBounds="True">
+                                        <Grid>
+                                            <!-- Loading Indicator -->
+                                            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="6"
+                                                        IsVisible="{Binding IsLoadingThumbnail}">
+                                                <ProgressBar IsIndeterminate="True" Width="80" Height="4" Foreground="#38BDF8" Background="#1E293B"/>
+                                                <TextBlock Text="Extracting preview..." FontSize="10" Foreground="#64748B" HorizontalAlignment="Center"/>
+                                            </StackPanel>
+
+                                            <!-- Thumbnail Image -->
+                                            <Image Source="{Binding InspectorThumbnail}"
+                                                   Stretch="Uniform"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center"
+                                                   IsVisible="{Binding !IsLoadingThumbnail}"/>
+
+                                            <!-- Fallback Placeholder when no thumbnail available -->
+                                            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="4"
+                                                        IsVisible="{Binding InspectorThumbnail, Converter={x:Static ObjectConverters.IsNull}}">
+                                                <TextBlock Text="📷" FontSize="28" HorizontalAlignment="Center" Opacity="0.5"/>
+                                                <TextBlock Text="No preview available" FontSize="11" Foreground="#64748B" HorizontalAlignment="Center"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+
+                                    <!-- Status & Path Summary -->
+                                    <Border Background="#1E293B" CornerRadius="6" Padding="10,8">
+                                        <StackPanel Spacing="6">
+                                            <Grid ColumnDefinitions="Auto,*">
+                                                <Border Grid.Column="0" Background="{Binding SelectedMediaItem.StatusBadgeColor}" CornerRadius="4" Padding="6,2" Margin="0,0,8,0">
+                                                    <TextBlock Text="{Binding SelectedMediaItem.StatusText}" Foreground="#FFFFFF" FontSize="10" FontWeight="Bold"/>
+                                                </Border>
+                                                <TextBlock Grid.Column="1" Text="{Binding SelectedMediaItem.SizeFormatted}" FontSize="11" FontWeight="SemiBold" Foreground="#94A3B8" VerticalAlignment="Center"/>
+                                            </Grid>
+                                            <TextBlock Text="{Binding SelectedMediaItem.RelativePath}" FontSize="10" Foreground="#CBD5E1" TextWrapping="Wrap"/>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <!-- EXIF Camera & Exposure Card -->
+                                    <Border Background="#1E293B" CornerRadius="6" Padding="10,8"
+                                            IsVisible="{Binding InspectorMetadata.HasExif}">
+                                        <StackPanel Spacing="6">
+                                            <TextBlock Text="CAMERA &amp; EXPOSURE" FontSize="10" FontWeight="Bold" Foreground="#64748B"/>
+                                            <TextBlock Text="{Binding InspectorMetadata.FormattedCameraSummary}" FontSize="12" FontWeight="SemiBold" Foreground="#F8FAFC"/>
+                                            <TextBlock Text="{Binding InspectorMetadata.LensModel}" FontSize="10" Foreground="#94A3B8" TextTrimming="CharacterEllipsis"
+                                                       IsVisible="{Binding InspectorMetadata.LensModel, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                                            <TextBlock Text="{Binding InspectorMetadata.FormattedExposureSummary}" FontSize="11" Foreground="#38BDF8"/>
+                                            <TextBlock Text="{Binding InspectorMetadata.DateTimeOriginal, StringFormat='Captured: {0}'}" FontSize="10" Foreground="#64748B"
+                                                       IsVisible="{Binding InspectorMetadata.DateTimeOriginal, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                                            <TextBlock Text="{Binding InspectorMetadata.Dimensions, StringFormat='Resolution: {0}'}" FontSize="10" Foreground="#64748B"
+                                                       IsVisible="{Binding InspectorMetadata.Dimensions, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <!-- Source Checksum Fingerprints Card -->
+                                    <Border Background="#1E293B" CornerRadius="6" Padding="10,8">
+                                        <StackPanel Spacing="6">
+                                            <Grid ColumnDefinitions="*,Auto">
+                                                <TextBlock Grid.Column="0" Text="SOURCE CHECKSUMS" FontSize="10" FontWeight="Bold" Foreground="#64748B"/>
+                                                <TextBlock Grid.Column="1" Text="ORIGINAL" FontSize="9" FontWeight="Bold" Foreground="#38BDF8"/>
+                                            </Grid>
+                                            <Grid ColumnDefinitions="45,*">
+                                                <TextBlock Grid.Column="0" Text="Head:" FontSize="10" Foreground="#64748B"/>
+                                                <TextBlock Grid.Column="1" Text="{Binding SelectedMediaItem.HeadHashHex}" FontSize="10" FontFamily="Courier New, monospace" Foreground="#94A3B8" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding SelectedMediaItem.HeadHashHex}"/>
+                                            </Grid>
+                                            <Grid ColumnDefinitions="45,*">
+                                                <TextBlock Grid.Column="0" Text="Tail:" FontSize="10" Foreground="#64748B"/>
+                                                <TextBlock Grid.Column="1" Text="{Binding SelectedMediaItem.TailHashHex}" FontSize="10" FontFamily="Courier New, monospace" Foreground="#94A3B8" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding SelectedMediaItem.TailHashHex}"/>
+                                            </Grid>
+                                            <Grid ColumnDefinitions="45,*" IsVisible="{Binding SelectedMediaItem.HasDeepHash}">
+                                                <TextBlock Grid.Column="0" Text="Deep:" FontSize="10" Foreground="#64748B"/>
+                                                <TextBlock Grid.Column="1" Text="{Binding SelectedMediaItem.DeepHashHex}" FontSize="10" FontFamily="Courier New, monospace" Foreground="#94A3B8" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding SelectedMediaItem.DeepHashHex}"/>
+                                            </Grid>
+                                            <Grid ColumnDefinitions="45,*" IsVisible="{Binding SelectedMediaItem.HasFullHash}">
+                                                <TextBlock Grid.Column="0" Text="Full:" FontSize="10" Foreground="#64748B"/>
+                                                <TextBlock Grid.Column="1" Text="{Binding SelectedMediaItem.FullHashHex}" FontSize="10" FontFamily="Courier New, monospace" Foreground="#94A3B8" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding SelectedMediaItem.FullHashHex}"/>
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <!-- Destination Comparative Verification Matrix -->
+                                    <Border Background="#1E293B" CornerRadius="6" Padding="10,8"
+                                            IsVisible="{Binding SelectedMediaItem.HasDestinations}">
+                                        <StackPanel Spacing="8">
+                                            <TextBlock Text="DESTINATION VERIFICATION MATRIX" FontSize="10" FontWeight="Bold" Foreground="#64748B"/>
+
+                                            <ItemsControl ItemsSource="{Binding SelectedMediaItem.DestinationComparisons}">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate x:DataType="vm:DestinationComparisonViewModel">
+                                                        <Border Background="#111827" BorderBrush="#1F2937" BorderThickness="1" CornerRadius="6" Padding="8" Margin="0,0,0,8">
+                                                            <StackPanel Spacing="6">
+                                                                <!-- Destination Header Strip -->
+                                                                <Grid ColumnDefinitions="*,Auto">
+                                                                    <TextBlock Grid.Column="0" Text="{Binding DestinationName}" FontSize="11" FontWeight="Bold" Foreground="#F8FAFC" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                                                                    <Border Grid.Column="1" Background="{Binding StatusBadgeBackground}" CornerRadius="4" Padding="6,2" VerticalAlignment="Center">
+                                                                        <TextBlock Text="{Binding StatusText}" FontSize="10" FontWeight="Bold" Foreground="{Binding StatusBadgeColor}"/>
+                                                                    </Border>
+                                                                </Grid>
+
+                                                                <!-- Destination Matched Path -->
+                                                                <TextBlock Text="{Binding MatchedFilePath}" FontSize="9" Foreground="#64748B" TextTrimming="CharacterEllipsis"
+                                                                           ToolTip.Tip="{Binding MatchedFilePath}" IsVisible="{Binding HasMatchedFilePath}"/>
+
+                                                                <!-- Failure Warning Banner -->
+                                                                <Border Background="#2B1417" BorderBrush="#7F1D1D" BorderThickness="1" CornerRadius="4" Padding="6,4"
+                                                                        IsVisible="{Binding HasFailureReason}">
+                                                                    <TextBlock Text="{Binding FailureReason}" FontSize="10" Foreground="#FCA5A5" TextWrapping="Wrap"/>
+                                                                </Border>
+
+                                                                <!-- Comparative Header -->
+                                                                <Grid ColumnDefinitions="36,*,*,62" Margin="0,2,0,0">
+                                                                    <TextBlock Grid.Column="0" Text="CHUNK" FontSize="9" FontWeight="Bold" Foreground="#64748B"/>
+                                                                    <TextBlock Grid.Column="1" Text="SOURCE" FontSize="9" FontWeight="Bold" Foreground="#64748B" Margin="2,0"/>
+                                                                    <TextBlock Grid.Column="2" Text="DEST" FontSize="9" FontWeight="Bold" Foreground="#64748B" Margin="2,0"/>
+                                                                    <TextBlock Grid.Column="3" Text="MATCH" FontSize="9" FontWeight="Bold" Foreground="#64748B" HorizontalAlignment="Center"/>
+                                                                </Grid>
+
+                                                                <!-- Chunk Rows -->
+                                                                <ItemsControl ItemsSource="{Binding Rows}">
+                                                                    <ItemsControl.ItemTemplate>
+                                                                        <DataTemplate x:DataType="vm:HashComparisonRowViewModel">
+                                                                            <Grid ColumnDefinitions="36,*,*,62" Margin="0,2" IsVisible="{Binding IsVisible}">
+                                                                                <TextBlock Grid.Column="0" Text="{Binding ChunkName}" FontSize="9" Foreground="#94A3B8" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                                                                <TextBlock Grid.Column="1" Text="{Binding SourceHashHex}" FontSize="9" FontFamily="Courier New, monospace"
+                                                                                           Foreground="#94A3B8" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding SourceHashHex}"
+                                                                                           Margin="2,0" VerticalAlignment="Center"/>
+                                                                                <TextBlock Grid.Column="2" Text="{Binding DestinationHashHex}" FontSize="9" FontFamily="Courier New, monospace"
+                                                                                           Foreground="{Binding DestinationHashColor}" TextTrimming="CharacterEllipsis"
+                                                                                           ToolTip.Tip="{Binding DestinationHashHex}" Margin="2,0" VerticalAlignment="Center"/>
+                                                                                <Border Grid.Column="3" Background="{Binding MatchBadgeBackground}" CornerRadius="3" Padding="4,1"
+                                                                                        HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                                                    <TextBlock Text="{Binding MatchBadgeText}" FontSize="8" FontWeight="Bold" Foreground="{Binding MatchBadgeColor}"/>
+                                                                                </Border>
+                                                                            </Grid>
+                                                                        </DataTemplate>
+                                                                    </ItemsControl.ItemTemplate>
+                                                                </ItemsControl>
+                                                            </StackPanel>
+                                                        </Border>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+                                    </Border>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Border>
+                    </Grid>
 
                     <!-- Duplicates Explorer View (Visible on Duplicates Tab) -->
                     <Grid Grid.Row="1" RowDefinitions="Auto,*" IsVisible="{Binding IsDuplicatesTabActive}">
