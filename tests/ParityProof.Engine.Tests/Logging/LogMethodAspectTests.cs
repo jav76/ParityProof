@@ -96,14 +96,30 @@ public sealed class LogMethodAspectTests
             .CreateLogger();
     }
 
-    private async Task WaitForLogCountAsync(int expectedCount, int timeoutMs = 1000)
+    private IReadOnlyList<LogEvent> GetLogs(string? typeName = null)
+    {
+        IReadOnlyList<LogEvent> events = _sink.Events;
+        if (string.IsNullOrEmpty(typeName))
+        {
+            return events;
+        }
+
+        return events
+            .Where(e => e.Properties.TryGetValue("TypeName", out LogEventPropertyValue? prop) &&
+                        prop.ToString().Trim('"').Equals(typeName, StringComparison.Ordinal))
+            .ToList();
+    }
+
+    private async Task<IReadOnlyList<LogEvent>> WaitForLogCountAsync(int expectedCount, string? typeName = null, int timeoutMs = 1000)
     {
         int elapsed = 0;
-        while (_sink.Events.Count < expectedCount && elapsed < timeoutMs)
+        while (GetLogs(typeName).Count < expectedCount && elapsed < timeoutMs)
         {
-            await Task.Delay(20);
-            elapsed += 20;
+            await Task.Delay(10).ConfigureAwait(false);
+            elapsed += 10;
         }
+
+        return GetLogs(typeName);
     }
 
     [Fact]
@@ -115,7 +131,7 @@ public sealed class LogMethodAspectTests
         int result = service.Multiply(6, 7);
 
         Assert.Equal(42, result);
-        IReadOnlyList<LogEvent> logs = _sink.Events;
+        IReadOnlyList<LogEvent> logs = GetLogs(nameof(SampleDecoratedClass));
 
         Assert.True(logs.Count >= 2, $"Expected at least 2 logs, got {logs.Count}");
 
@@ -139,7 +155,7 @@ public sealed class LogMethodAspectTests
 
         service.ExecuteAction("ping");
 
-        IReadOnlyList<LogEvent> logs = _sink.Events;
+        IReadOnlyList<LogEvent> logs = GetLogs(nameof(SampleDecoratedClass));
         Assert.True(logs.Count >= 2);
 
         string exitMessage = logs[1].RenderMessage();
@@ -155,7 +171,7 @@ public sealed class LogMethodAspectTests
 
         Assert.Throws<InvalidOperationException>(() => service.FailSync());
 
-        IReadOnlyList<LogEvent> logs = _sink.Events;
+        IReadOnlyList<LogEvent> logs = GetLogs(nameof(SampleDecoratedClass));
         Assert.True(logs.Count >= 2);
 
         LogEvent errorLog = logs.Last();
@@ -173,9 +189,8 @@ public sealed class LogMethodAspectTests
         string result = await service.ComputeAsync("item", 99);
 
         Assert.Equal("item_99", result);
-        await WaitForLogCountAsync(2);
+        IReadOnlyList<LogEvent> logs = await WaitForLogCountAsync(2, nameof(SampleDecoratedClass));
 
-        IReadOnlyList<LogEvent> logs = _sink.Events;
         Assert.True(logs.Count >= 2);
 
         LogEvent entryLog = logs[0];
@@ -195,9 +210,8 @@ public sealed class LogMethodAspectTests
         SampleDecoratedClass service = new();
 
         await service.AsyncVoidTask();
-        await WaitForLogCountAsync(2);
+        IReadOnlyList<LogEvent> logs = await WaitForLogCountAsync(2, nameof(SampleDecoratedClass));
 
-        IReadOnlyList<LogEvent> logs = _sink.Events;
         Assert.True(logs.Count >= 2);
 
         LogEvent exitLog = logs[1];
@@ -212,9 +226,8 @@ public sealed class LogMethodAspectTests
         SampleDecoratedClass service = new();
 
         await Assert.ThrowsAsync<ApplicationException>(async () => await service.AsyncFailTask());
-        await WaitForLogCountAsync(2);
+        IReadOnlyList<LogEvent> logs = await WaitForLogCountAsync(2, nameof(SampleDecoratedClass));
 
-        IReadOnlyList<LogEvent> logs = _sink.Events;
         Assert.True(logs.Count >= 2);
 
         LogEvent errorLog = logs.Last();
@@ -233,7 +246,7 @@ public sealed class LogMethodAspectTests
         byte[] result = service.EchoBuffer(largeArray);
 
         Assert.NotNull(result);
-        IReadOnlyList<LogEvent> logs = _sink.Events;
+        IReadOnlyList<LogEvent> logs = GetLogs(nameof(SampleDecoratedClass));
         Assert.True(logs.Count >= 2);
 
         string entryMessage = logs[0].RenderMessage();
@@ -252,7 +265,7 @@ public sealed class LogMethodAspectTests
         string result = service.CustomLevelMethod("alpha");
 
         Assert.Equal("Processed alpha", result);
-        IReadOnlyList<LogEvent> logs = _sink.Events;
+        IReadOnlyList<LogEvent> logs = GetLogs(nameof(SampleMethodDecoratedClass));
         Assert.True(logs.Count >= 2);
 
         Assert.Equal(LogEventLevel.Information, logs[0].Level);
@@ -268,7 +281,7 @@ public sealed class LogMethodAspectTests
         string result = service.UndecoratedMethod("beta");
 
         Assert.Equal("Raw beta", result);
-        Assert.Empty(_sink.Events);
+        Assert.Empty(GetLogs(nameof(SampleMethodDecoratedClass)));
     }
 
     [Fact]

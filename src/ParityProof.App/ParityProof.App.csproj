@@ -7,6 +7,7 @@
     <RuntimeIdentifiers>linux-x64;linux-arm64;win-x64;win-arm64;win-x86;osx-x64;osx-arm64</RuntimeIdentifiers>
     <StripSymbols>true</StripSymbols>
     <PublishTrimmed Condition="'$(PublishAot)' == 'true'">true</PublishTrimmed>
+    <AspectInjector_Enabled>false</AspectInjector_Enabled>
     <AspectInjectorEnabled>false</AspectInjectorEnabled>
   </PropertyGroup>
 
