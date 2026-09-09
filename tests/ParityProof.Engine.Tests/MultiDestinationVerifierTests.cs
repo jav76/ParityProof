@@ -353,6 +353,61 @@ public sealed class MultiDestinationVerifierTests : IDisposable
         Assert.Empty(results);
     }
 
+    [Fact]
+    public async Task VerifyAsync_SingleFileLockedOrInaccessible_DoesNotAbortRemainingBatch()
+    {
+        string cardDir = Path.Combine(_testDir, "card_qa004");
+        string backupDir = Path.Combine(_testDir, "backup_qa004");
+        Directory.CreateDirectory(cardDir);
+        Directory.CreateDirectory(backupDir);
+
+        byte[] payload1 = new byte[64 * 1024];
+        byte[] payload2 = new byte[64 * 1024];
+        byte[] payload3 = new byte[64 * 1024];
+        Random.Shared.NextBytes(payload1);
+        Random.Shared.NextBytes(payload2);
+        Random.Shared.NextBytes(payload3);
+
+        string srcFile1 = Path.Combine(cardDir, "FILE1.CR3");
+        string srcFile2 = Path.Combine(cardDir, "FILE2.CR3");
+        string srcFile3 = Path.Combine(cardDir, "FILE3.CR3");
+
+        File.WriteAllBytes(srcFile1, payload1);
+        File.WriteAllBytes(srcFile2, payload2);
+        File.WriteAllBytes(srcFile3, payload3);
+
+        File.WriteAllBytes(Path.Combine(backupDir, "FILE1.CR3"), payload1);
+        File.WriteAllBytes(Path.Combine(backupDir, "FILE2.CR3"), payload2);
+        File.WriteAllBytes(Path.Combine(backupDir, "FILE3.CR3"), payload3);
+
+        List<BackupDestination> destinations = new()
+        {
+            new BackupDestination("backup", "Backup Drive", backupDir)
+        };
+
+        // Exclusively lock FILE2 on the source filesystem
+        using FileStream lockStream = new(
+            srcFile2,
+            FileMode.Open,
+            FileAccess.ReadWrite,
+            FileShare.None);
+
+        (VerificationSummary summary, IReadOnlyList<VerificationResultItem> results) = await _verifier.VerifyAsync(
+            cardDir,
+            destinations,
+            VerificationMode.Full,
+            FilterPreset.PhotosOnly);
+
+        Assert.Equal(3, summary.TotalFiles);
+        // FILE1 and FILE3 succeeded despite FILE2 being locked
+        Assert.Equal(2, summary.FullyVerifiedFiles);
+        Assert.Equal(1, summary.CorruptFiles);
+        Assert.Equal(3, results.Count);
+
+        VerificationResultItem lockedResult = results.First(r => r.SourceFile.RelativePath == "FILE2.CR3");
+        Assert.True(lockedResult.HasAnyCorruption);
+    }
+
     public void Dispose()
     {
         try

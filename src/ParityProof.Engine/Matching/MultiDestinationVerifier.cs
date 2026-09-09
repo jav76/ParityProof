@@ -490,99 +490,123 @@ public sealed class MultiDestinationVerifier : IVerificationEngine
                         hashingStopwatch.Start();
                     }
 
-                    activeVerificationFile = sourceFile.RelativePath;
-
-                    // Check if any active destination contains candidates matching source file length
-                    bool hasAnyCandidate = activeDestinations.Any(d =>
-                        destinationIndexes[d.Id].ContainsKey(sourceFile.FileLength));
-
-                    Dictionary<string, FileMatchStatus> statuses = new();
-                    MediaFile finalSourceFile = sourceFile;
-
-                    if (!hasAnyCandidate)
+                    try
                     {
-                        // Fast-path: Missing on all destinations without performing any disk I/O on source card
+                        activeVerificationFile = sourceFile.RelativePath;
+
+                        // Check if any active destination contains candidates matching source file length
+                        bool hasAnyCandidate = activeDestinations.Any(d =>
+                            destinationIndexes[d.Id].ContainsKey(sourceFile.FileLength));
+
+                        Dictionary<string, FileMatchStatus> statuses = new();
+                        MediaFile finalSourceFile = sourceFile;
+
+                        if (!hasAnyCandidate)
+                        {
+                            // Fast-path: Missing on all destinations without performing any disk I/O on source card
+                            foreach (BackupDestination dest in activeDestinations)
+                            {
+                                statuses[dest.Id] = new FileMatchStatus(
+                                    DestinationId: dest.Id,
+                                    DestinationRootPath: dest.RootPath,
+                                    Status: MediaStatus.Missing,
+                                    FailureReason: "No file found with matching byte size.");
+                            }
+                        }
+                        else
+                        {
+                            // Ensure source file is hashed once under source media throttler
+                            MediaFile hydratedSource = sourceFile;
+                            if (mode != VerificationMode.SuperFast)
+                            {
+                                await sourceThrottler.WaitAsync(ct).ConfigureAwait(false);
+                                try
+                                {
+                                    hydratedSource = await _matcher.EnsureHashesAsync(
+                                        sourceFile,
+                                        mode,
+                                        inMemoryCache,
+                                        persistenceChannel.Writer,
+                                        onBytesRead: bytes => driveBytesRead.AddOrUpdate("SRC", bytes, (_, cur) => cur + bytes),
+                                        cancellationToken: ct).ConfigureAwait(false);
+                                }
+                                finally
+                                {
+                                    sourceThrottler.Release();
+                                }
+                            }
+
+                            finalSourceFile = hydratedSource;
+
+                            // Dispatch parallel candidate matches across all active destinations concurrently
+                            Task<FileMatchStatus>[] matchTasks = activeDestinations.Select(async dest =>
+                            {
+                                Dictionary<long, List<MediaFile>> indexByLen = destinationIndexes[dest.Id];
+                                SemaphoreSlim throttler = destinationThrottlers[dest.Id];
+
+                                await throttler.WaitAsync(ct).ConfigureAwait(false);
+                                try
+                                {
+                                    return await _matcher.MatchFileAsync(
+                                        hydratedSource,
+                                        dest,
+                                        indexByLen,
+                                        mode,
+                                        inMemoryCache,
+                                        persistenceChannel.Writer,
+                                        onSourceBytesRead: bytes => driveBytesRead.AddOrUpdate("SRC", bytes, (_, cur) => cur + bytes),
+                                        onDestBytesRead: bytes => driveBytesRead.AddOrUpdate(dest.Id, bytes, (_, cur) => cur + bytes),
+                                        cancellationToken: ct).ConfigureAwait(false);
+                                }
+                                finally
+                                {
+                                    throttler.Release();
+                                }
+                            }).ToArray();
+
+                            FileMatchStatus[] resultsArray = await Task.WhenAll(matchTasks).ConfigureAwait(false);
+                            for (int d = 0; d < activeDestinations.Count; d++)
+                            {
+                                statuses[activeDestinations[d].Id] = resultsArray[d];
+                            }
+                        }
+
+                        if (inMemoryCache.TryGetValue(finalSourceFile.FullPath, out MediaFile? cachedSource))
+                        {
+                            finalSourceFile = finalSourceFile with
+                            {
+                                HeadHash = finalSourceFile.HeadHash ?? cachedSource.HeadHash,
+                                TailHash = finalSourceFile.TailHash ?? cachedSource.TailHash,
+                                DeepHash = finalSourceFile.DeepHash ?? cachedSource.DeepHash,
+                                FullHash = finalSourceFile.FullHash ?? cachedSource.FullHash
+                            };
+                        }
+
+                        resultArray[index] = new VerificationResultItem(finalSourceFile, statuses);
+                        Interlocked.Increment(ref processedFilesCount);
+                        Interlocked.Add(ref processedBytesCount, sourceFile.FileLength);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        AppLogger.Logger.Warning(
+                            ex,
+                            "Failed to verify media file {FilePath} due to an I/O error",
+                            sourceFile.FullPath);
+
+                        Dictionary<string, FileMatchStatus> errorStatuses = new();
                         foreach (BackupDestination dest in activeDestinations)
                         {
-                            statuses[dest.Id] = new FileMatchStatus(
+                            errorStatuses[dest.Id] = new FileMatchStatus(
                                 DestinationId: dest.Id,
                                 DestinationRootPath: dest.RootPath,
-                                Status: MediaStatus.Missing,
-                                FailureReason: "No file found with matching byte size.");
-                        }
-                    }
-                    else
-                    {
-                        // Ensure source file is hashed once under source media throttler
-                        MediaFile hydratedSource = sourceFile;
-                        if (mode != VerificationMode.SuperFast)
-                        {
-                            await sourceThrottler.WaitAsync(ct).ConfigureAwait(false);
-                            try
-                            {
-                                hydratedSource = await _matcher.EnsureHashesAsync(
-                                    sourceFile,
-                                    mode,
-                                    inMemoryCache,
-                                    persistenceChannel.Writer,
-                                    onBytesRead: bytes => driveBytesRead.AddOrUpdate("SRC", bytes, (_, cur) => cur + bytes),
-                                    cancellationToken: ct).ConfigureAwait(false);
-                            }
-                            finally
-                            {
-                                sourceThrottler.Release();
-                            }
+                                Status: MediaStatus.Corrupt,
+                                FailureReason: $"I/O Error: {ex.Message}");
                         }
 
-                        finalSourceFile = hydratedSource;
-
-                        // Dispatch parallel candidate matches across all active destinations concurrently
-                        Task<FileMatchStatus>[] matchTasks = activeDestinations.Select(async dest =>
-                        {
-                            Dictionary<long, List<MediaFile>> indexByLen = destinationIndexes[dest.Id];
-                            SemaphoreSlim throttler = destinationThrottlers[dest.Id];
-
-                            await throttler.WaitAsync(ct).ConfigureAwait(false);
-                            try
-                            {
-                                return await _matcher.MatchFileAsync(
-                                    hydratedSource,
-                                    dest,
-                                    indexByLen,
-                                    mode,
-                                    inMemoryCache,
-                                    persistenceChannel.Writer,
-                                    onSourceBytesRead: bytes => driveBytesRead.AddOrUpdate("SRC", bytes, (_, cur) => cur + bytes),
-                                    onDestBytesRead: bytes => driveBytesRead.AddOrUpdate(dest.Id, bytes, (_, cur) => cur + bytes),
-                                    cancellationToken: ct).ConfigureAwait(false);
-                            }
-                            finally
-                            {
-                                throttler.Release();
-                            }
-                        }).ToArray();
-
-                        FileMatchStatus[] resultsArray = await Task.WhenAll(matchTasks).ConfigureAwait(false);
-                        for (int d = 0; d < activeDestinations.Count; d++)
-                        {
-                            statuses[activeDestinations[d].Id] = resultsArray[d];
-                        }
+                        resultArray[index] = new VerificationResultItem(sourceFile, errorStatuses);
+                        Interlocked.Increment(ref processedFilesCount);
+                        Interlocked.Add(ref processedBytesCount, sourceFile.FileLength);
                     }
-
-                    if (inMemoryCache.TryGetValue(finalSourceFile.FullPath, out MediaFile? cachedSource))
-                    {
-                        finalSourceFile = finalSourceFile with
-                        {
-                            HeadHash = finalSourceFile.HeadHash ?? cachedSource.HeadHash,
-                            TailHash = finalSourceFile.TailHash ?? cachedSource.TailHash,
-                            DeepHash = finalSourceFile.DeepHash ?? cachedSource.DeepHash,
-                            FullHash = finalSourceFile.FullHash ?? cachedSource.FullHash
-                        };
-                    }
-
-                    resultArray[index] = new VerificationResultItem(finalSourceFile, statuses);
-                    Interlocked.Increment(ref processedFilesCount);
-                    Interlocked.Add(ref processedBytesCount, sourceFile.FileLength);
                 }).ConfigureAwait(false);
         }
         finally

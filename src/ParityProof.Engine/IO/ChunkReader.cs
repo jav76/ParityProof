@@ -61,7 +61,7 @@ public static class ChunkReader
             filePath,
             FileMode.Open,
             FileAccess.Read,
-            FileShare.Read,
+            FileShare.ReadWrite | FileShare.Delete,
             FileOptions.SequentialScan);
 
         return ComputeHeadTailHash(handle, fileInfo.Length, chunkSize);

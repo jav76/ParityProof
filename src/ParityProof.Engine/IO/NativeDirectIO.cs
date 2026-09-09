@@ -9,6 +9,8 @@ public static class NativeDirectIO
 {
     private const uint GENERIC_READ = 0x80000000;
     private const uint FILE_SHARE_READ = 0x00000001;
+    private const uint FILE_SHARE_WRITE = 0x00000002;
+    private const uint FILE_SHARE_DELETE = 0x00000004;
     private const uint OPEN_EXISTING = 3;
     private const uint FILE_FLAG_NO_BUFFERING = 0x20000000;
     private const uint FILE_FLAG_SEQUENTIAL_SCAN = 0x08000000;
@@ -41,7 +43,7 @@ public static class NativeDirectIO
             SafeFileHandle winHandle = CreateFileW(
                 filePath,
                 GENERIC_READ,
-                FILE_SHARE_READ,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                 IntPtr.Zero,
                 OPEN_EXISTING,
                 FILE_FLAG_SEQUENTIAL_SCAN,
@@ -57,7 +59,7 @@ public static class NativeDirectIO
             filePath,
             FileMode.Open,
             FileAccess.Read,
-            FileShare.Read,
+            FileShare.ReadWrite | FileShare.Delete,
             FileOptions.SequentialScan);
 
         if (OperatingSystem.IsMacOS())
