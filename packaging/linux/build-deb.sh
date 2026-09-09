@@ -61,7 +61,7 @@ Version: $VERSION
 Section: utils
 Priority: optional
 Architecture: $DEB_ARCH
-Maintainer: ParityProof Contributors <https://github.com/jarett/ParityProof>
+Maintainer: ParityProof Contributors <https://github.com/jav76/ParityProof>
 Description: Pro Media Ingest and Backup Verification
  ParityProof is a high-performance cross-platform desktop application purpose-built
  for photographers, DITs, and videographers to rapidly verify whether media on

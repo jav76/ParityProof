@@ -5,7 +5,7 @@
     <Copyright>Copyright © 2026 ParityProof Contributors</Copyright>
     <Authors>ParityProof Contributors</Authors>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <RepositoryUrl>https://github.com/jarett/ParityProof</RepositoryUrl>
+    <RepositoryUrl>https://github.com/jav76/ParityProof</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
 
     <!-- Deterministic fallback version for local builds -->
