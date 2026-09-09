@@ -33,3 +33,6 @@ checksums-sha256.txt
 *.db-wal
 *.sqlite
 *.sqlite3
+
+# Graphify
+graphify-out/

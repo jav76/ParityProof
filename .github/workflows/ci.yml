@@ -69,4 +69,4 @@ jobs:
           dotnet-version: '10.0.x'
 
       - name: Verify build for ${{ matrix.rid }}
-        run: dotnet build src/ParityProof.App/ParityProof.App.csproj --configuration Release
+        run: dotnet build src/ParityProof.App/ParityProof.App.csproj --configuration Release -p:nodeReuse=false

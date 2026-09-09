@@ -110,6 +110,8 @@ public sealed class MultiDestinationVerifierTests : IDisposable
             File.WriteAllBytes(Path.Combine(backupDir, fileName), data);
         }
 
+        expectedFileNames.Sort(StringComparer.OrdinalIgnoreCase);
+
         List<BackupDestination> destinations = new()
         {
             new BackupDestination("backup", "Backup Drive", backupDir)

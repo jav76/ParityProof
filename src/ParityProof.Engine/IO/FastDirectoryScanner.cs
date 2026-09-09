@@ -355,6 +355,7 @@ public static class FastDirectoryScanner
         }
 
         List<MediaFile> finalResults = discoveredFiles.ToList();
+        finalResults.Sort((a, b) => string.Compare(a.RelativePath, b.RelativePath, StringComparison.OrdinalIgnoreCase));
         double totalSeconds = scanStopwatch.Elapsed.TotalSeconds;
         double finalRate = totalSeconds > 0 ? (finalResults.Count / totalSeconds) : 0.0;
         double finalMb = totalDiscoveredBytes / (1024.0 * 1024.0);
