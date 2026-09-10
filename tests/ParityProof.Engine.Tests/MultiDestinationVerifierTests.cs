@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
+using ParityProof.App.ViewModels;
 using ParityProof.Core.Enums;
 using ParityProof.Core.Models;
 using ParityProof.Engine.Matching;
@@ -406,6 +408,62 @@ public sealed class MultiDestinationVerifierTests : IDisposable
 
         VerificationResultItem lockedResult = results.First(r => r.SourceFile.RelativePath == "FILE2.CR3");
         Assert.True(lockedResult.HasAnyCorruption);
+    }
+
+    [Fact]
+    public async Task VerifyAsync_ThrowsOnDuplicateDestinationIds()
+    {
+        string cardDir = Path.Combine(_testDir, "dup_id_card");
+        string dest1 = Path.Combine(_testDir, "dup_id_dst1");
+        string dest2 = Path.Combine(_testDir, "dup_id_dst2");
+        Directory.CreateDirectory(cardDir);
+        Directory.CreateDirectory(dest1);
+        Directory.CreateDirectory(dest2);
+
+        List<BackupDestination> destinations = new()
+        {
+            new BackupDestination("dest_1", "Drive 1", dest1),
+            new BackupDestination("dest_1", "Drive 2", dest2)
+        };
+
+        await Assert.ThrowsAsync<ArgumentException>(async () =>
+        {
+            await _verifier.VerifyAsync(
+                cardDir,
+                destinations,
+                VerificationMode.Quick,
+                FilterPreset.PhotosOnly);
+        });
+    }
+
+    [Fact]
+    public void MainViewModel_AddDestination_GeneratesUniqueIdsAfterRemoval()
+    {
+        MainViewModel vm = new();
+        string dir1 = Path.Combine(_testDir, "vm_dst1");
+        string dir2 = Path.Combine(_testDir, "vm_dst2");
+        string dir3 = Path.Combine(_testDir, "vm_dst3");
+        Directory.CreateDirectory(dir1);
+        Directory.CreateDirectory(dir2);
+        Directory.CreateDirectory(dir3);
+
+        vm.AddDestination(dir1);
+        vm.AddDestination(dir2);
+        Assert.Equal(2, vm.Destinations.Count);
+        string firstId = vm.Destinations[0].Id;
+        string secondId = vm.Destinations[1].Id;
+        Assert.NotEqual(firstId, secondId);
+
+        // Remove the first destination
+        vm.Destinations.RemoveAt(0);
+        Assert.Single(vm.Destinations);
+        Assert.Equal(secondId, vm.Destinations[0].Id);
+
+        // Add a third destination; its ID must not collide with remaining secondId
+        vm.AddDestination(dir3);
+        Assert.Equal(2, vm.Destinations.Count);
+        string thirdId = vm.Destinations[1].Id;
+        Assert.NotEqual(secondId, thirdId);
     }
 
     public void Dispose()

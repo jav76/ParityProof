@@ -49,6 +49,8 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private string _sourcePath = string.Empty;
 
+    private int _destinationSequence = 0;
+
     [ObservableProperty]
     private ObservableCollection<BackupDestinationViewModel> _destinations = new();
 
@@ -629,7 +631,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     }
 
     [RelayCommand]
-    private void AddDestination(string? path)
+    public void AddDestination(string? path)
     {
         if (string.IsNullOrWhiteSpace(path))
         {
@@ -667,7 +669,13 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        string id = "dest_" + (Destinations.Count + 1);
+        int seq = Interlocked.Increment(ref _destinationSequence);
+        string id = $"dest_{seq}";
+        while (Destinations.Any(d => string.Equals(d.Id, id, StringComparison.OrdinalIgnoreCase)))
+        {
+            seq = Interlocked.Increment(ref _destinationSequence);
+            id = $"dest_{seq}";
+        }
         string name = Path.GetFileName(trimmed.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
         if (string.IsNullOrEmpty(name))
         {

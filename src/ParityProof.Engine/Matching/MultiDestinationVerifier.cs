@@ -75,6 +75,10 @@ public sealed class MultiDestinationVerifier : IVerificationEngine
             pauseToken: pauseToken);
 
         List<BackupDestination> activeDestinations = destinations.Where(d => d.IsEnabled).ToList();
+        if (activeDestinations.Select(d => d.Id).Distinct(StringComparer.OrdinalIgnoreCase).Count() != activeDestinations.Count)
+        {
+            throw new ArgumentException("Duplicate destination IDs detected in verification request.", nameof(destinations));
+        }
         Task<(BackupDestination Dest, IReadOnlyList<MediaFile> Files)>[] destScanTasks = activeDestinations
             .Select(async dest =>
             {
