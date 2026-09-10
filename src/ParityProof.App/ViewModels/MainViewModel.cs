@@ -715,13 +715,6 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
             return false;
         }
 
-        string destWithSlash = canonicalDest + Path.DirectorySeparatorChar;
-        if (canonicalSource.StartsWith(destWithSlash, StringComparison.OrdinalIgnoreCase))
-        {
-            validationError = "Source storage path cannot be located inside the destination path.";
-            return false;
-        }
-
         return true;
     }
 

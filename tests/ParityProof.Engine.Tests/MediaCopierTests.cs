@@ -250,7 +250,8 @@ public sealed class MediaCopierTests : IDisposable
     [InlineData("/volume/card", "/volume/card", false)]
     [InlineData("/volume/card/", "/volume/card", false)]
     [InlineData("/volume/card", "/volume/card/subbackup", false)]
-    [InlineData("/volume/card/subfolder", "/volume/card", false)]
+    [InlineData("/volume/card/subfolder", "/volume/card", true)]
+    [InlineData("/volume/card/DCIM/100CANON", "/volume/card", true)]
     [InlineData("/volume/card", "/volume/backup_drive", true)]
     public void TryValidateSourceAndDestinationPaths_ValidatesOverlapCorrectly(
         string source,
