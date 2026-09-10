@@ -1,5 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using Avalonia.Media;
+using ParityProof.App.Converters;
 using ParityProof.App.ViewModels;
 using ParityProof.Core.Enums;
 using ParityProof.Core.Models;
@@ -326,5 +329,52 @@ public sealed class MediaItemViewModelTests
         DuplicateFileItemViewModel duplicateVm = new(duplicateItem);
         Assert.Equal("DUPLICATE", duplicateVm.StatusBadgeText);
         Assert.Equal("#78350F", duplicateVm.StatusBadgeBackground);
+    }
+
+    [Theory]
+    [InlineData("All", "All", true)]
+    [InlineData("Verified", "Verified", true)]
+    [InlineData("Missing", "Missing", true)]
+    [InlineData("Corrupt", "Corrupt", true)]
+    [InlineData("Duplicates", "Duplicates", true)]
+    [InlineData("Verified", "Missing", false)]
+    [InlineData("All", "Verified", false)]
+    public void TabActiveConverters_ReturnCorrectBrushes_ForTabState(
+        string activeTab,
+        string targetTab,
+        bool isExpectedActive)
+    {
+        object? bg = TabActiveBackgroundConverter.Instance.Convert(
+            activeTab,
+            typeof(IBrush),
+            targetTab,
+            CultureInfo.InvariantCulture);
+        Assert.NotNull(bg);
+        Assert.IsAssignableFrom<IBrush>(bg);
+
+        object? border = TabActiveBorderBrushConverter.Instance.Convert(
+            activeTab,
+            typeof(IBrush),
+            targetTab,
+            CultureInfo.InvariantCulture);
+        Assert.NotNull(border);
+        Assert.IsAssignableFrom<IBrush>(border);
+
+        if (!isExpectedActive)
+        {
+            SolidColorBrush bgBrush = Assert.IsType<SolidColorBrush>(bg);
+            Assert.Equal(Color.Parse("#1E293B"), bgBrush.Color);
+
+            SolidColorBrush borderBrush = Assert.IsType<SolidColorBrush>(border);
+            Assert.Equal(Color.Parse("#334155"), borderBrush.Color);
+        }
+        else
+        {
+            SolidColorBrush bgBrush = Assert.IsType<SolidColorBrush>(bg);
+            Assert.NotEqual(Color.Parse("#1E293B"), bgBrush.Color);
+
+            SolidColorBrush borderBrush = Assert.IsType<SolidColorBrush>(border);
+            Assert.NotEqual(Color.Parse("#334155"), borderBrush.Color);
+        }
     }
 }

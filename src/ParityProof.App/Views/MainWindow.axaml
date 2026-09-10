@@ -459,16 +459,30 @@
                         <!-- Filter Tabs -->
                         <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="4">
                             <Button Content="All" Command="{Binding SetActiveTabCommand}" CommandParameter="All"
-                                    Background="{Binding ActiveTab, Converter={x:Static ObjectConverters.Equal}, ConverterParameter=All, Mode=OneWay}"
-                                    Foreground="#F8FAFC" Padding="10,6" FontSize="12"/>
+                                    Background="{Binding ActiveTab, Converter={x:Static conv:TabActiveBackgroundConverter.Instance}, ConverterParameter=All}"
+                                    BorderBrush="{Binding ActiveTab, Converter={x:Static conv:TabActiveBorderBrushConverter.Instance}, ConverterParameter=All}"
+                                    BorderThickness="1" CornerRadius="6"
+                                    Foreground="#F8FAFC" Padding="12,6" FontSize="12"/>
                             <Button Content="Verified" Command="{Binding SetActiveTabCommand}" CommandParameter="Verified"
-                                    Foreground="#34D399" Padding="10,6" FontSize="12"/>
+                                    Background="{Binding ActiveTab, Converter={x:Static conv:TabActiveBackgroundConverter.Instance}, ConverterParameter=Verified}"
+                                    BorderBrush="{Binding ActiveTab, Converter={x:Static conv:TabActiveBorderBrushConverter.Instance}, ConverterParameter=Verified}"
+                                    BorderThickness="1" CornerRadius="6"
+                                    Foreground="#34D399" Padding="12,6" FontSize="12"/>
                             <Button Content="Missing" Command="{Binding SetActiveTabCommand}" CommandParameter="Missing"
-                                    Foreground="#FB7185" Padding="10,6" FontSize="12"/>
+                                    Background="{Binding ActiveTab, Converter={x:Static conv:TabActiveBackgroundConverter.Instance}, ConverterParameter=Missing}"
+                                    BorderBrush="{Binding ActiveTab, Converter={x:Static conv:TabActiveBorderBrushConverter.Instance}, ConverterParameter=Missing}"
+                                    BorderThickness="1" CornerRadius="6"
+                                    Foreground="#FB7185" Padding="12,6" FontSize="12"/>
                             <Button Content="Corrupt" Command="{Binding SetActiveTabCommand}" CommandParameter="Corrupt"
-                                    Foreground="#FBBF24" Padding="10,6" FontSize="12"/>
+                                    Background="{Binding ActiveTab, Converter={x:Static conv:TabActiveBackgroundConverter.Instance}, ConverterParameter=Corrupt}"
+                                    BorderBrush="{Binding ActiveTab, Converter={x:Static conv:TabActiveBorderBrushConverter.Instance}, ConverterParameter=Corrupt}"
+                                    BorderThickness="1" CornerRadius="6"
+                                    Foreground="#FBBF24" Padding="12,6" FontSize="12"/>
                             <Button Command="{Binding SetActiveTabCommand}" CommandParameter="Duplicates"
-                                    Foreground="#F59E0B" Padding="10,6" FontSize="12">
+                                    Background="{Binding ActiveTab, Converter={x:Static conv:TabActiveBackgroundConverter.Instance}, ConverterParameter=Duplicates}"
+                                    BorderBrush="{Binding ActiveTab, Converter={x:Static conv:TabActiveBorderBrushConverter.Instance}, ConverterParameter=Duplicates}"
+                                    BorderThickness="1" CornerRadius="6"
+                                    Foreground="#F59E0B" Padding="12,6" FontSize="12">
                                 <StackPanel Orientation="Horizontal" Spacing="5">
                                     <TextBlock Text="Duplicates"/>
                                     <Border Background="#78350F" CornerRadius="6" Padding="4,1" Margin="2,0,0,0" IsVisible="{Binding HasDuplicates}">
