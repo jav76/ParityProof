@@ -256,10 +256,10 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     public bool CanStartOperation => !IsOperationActive;
     public bool CanStartCopy => HasMissingFiles && !IsOperationActive;
 
-    public ObservableCollection<MediaItemViewModel> AllItems { get; } = new();
-    public ObservableCollection<MediaItemViewModel> FilteredItems { get; } = new();
-    public ObservableCollection<DuplicateGroupViewModel> AllDuplicateGroups { get; } = new();
-    public ObservableCollection<DuplicateGroupViewModel> FilteredDuplicateGroups { get; } = new();
+    public ObservableRangeCollection<MediaItemViewModel> AllItems { get; } = new();
+    public ObservableRangeCollection<MediaItemViewModel> FilteredItems { get; } = new();
+    public ObservableRangeCollection<DuplicateGroupViewModel> AllDuplicateGroups { get; } = new();
+    public ObservableRangeCollection<DuplicateGroupViewModel> FilteredDuplicateGroups { get; } = new();
 
     [ObservableProperty]
     private MediaItemViewModel? _selectedMediaItem;
@@ -539,9 +539,28 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         }
     }
 
+    private DispatcherTimer? _searchDebounceTimer;
+
     partial void OnSearchTextChanged(string value)
     {
-        ApplyFilter();
+        if (_searchDebounceTimer is null)
+        {
+            _searchDebounceTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(200)
+            };
+            _searchDebounceTimer.Tick += (s, e) =>
+            {
+                _searchDebounceTimer.Stop();
+                ApplyFilter();
+            };
+        }
+        else
+        {
+            _searchDebounceTimer.Stop();
+        }
+
+        _searchDebounceTimer.Start();
     }
 
     partial void OnActiveTabChanged(string value)
@@ -550,12 +569,12 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         ApplyFilter();
     }
 
-    private void ApplyFilter()
+    [RelayCommand]
+    public void ApplyFilter()
     {
-        FilteredItems.Clear();
-        FilteredDuplicateGroups.Clear();
         string filter = SearchText.Trim();
 
+        List<MediaItemViewModel> matchedItems = new();
         foreach (MediaItemViewModel item in AllItems)
         {
             bool matchesTab = ActiveTab switch
@@ -577,9 +596,12 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
                 continue;
             }
 
-            FilteredItems.Add(item);
+            matchedItems.Add(item);
         }
 
+        FilteredItems.ReplaceAll(matchedItems);
+
+        List<DuplicateGroupViewModel> matchedGroups = new();
         foreach (DuplicateGroupViewModel group in AllDuplicateGroups)
         {
             bool matchesMode = DuplicateFilterMode switch
@@ -599,9 +621,11 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
                 group.Files.Any(f => f.RelativePath.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
                                      f.FullPath.Contains(filter, StringComparison.OrdinalIgnoreCase)))
             {
-                FilteredDuplicateGroups.Add(group);
+                matchedGroups.Add(group);
             }
         }
+
+        FilteredDuplicateGroups.ReplaceAll(matchedGroups);
     }
 
     [RelayCommand]
@@ -988,13 +1012,13 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
                 _ => COLOR_UNSAFE
             };
 
-            AllItems.Clear();
+            List<MediaItemViewModel> newItems = new(results.Count);
             foreach (VerificationResultItem item in results)
             {
-                AllItems.Add(new MediaItemViewModel(item));
+                newItems.Add(new MediaItemViewModel(item));
             }
+            AllItems.ReplaceAll(newItems);
 
-            AllDuplicateGroups.Clear();
             if (summary.DuplicateAnalysis is not null)
             {
                 DuplicateFilesCount = summary.DuplicateAnalysis.TotalDuplicateCopies;
@@ -1003,10 +1027,12 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
                 HasDuplicates = summary.DuplicateAnalysis.TotalDuplicateCopies > 0;
                 HasDuplicateGroups = summary.DuplicateAnalysis.Groups.Count > 0;
 
+                List<DuplicateGroupViewModel> newGroups = new(summary.DuplicateAnalysis.Groups.Count);
                 foreach (DuplicateGroup group in summary.DuplicateAnalysis.Groups)
                 {
-                    AllDuplicateGroups.Add(new DuplicateGroupViewModel(group));
+                    newGroups.Add(new DuplicateGroupViewModel(group));
                 }
+                AllDuplicateGroups.ReplaceAll(newGroups);
             }
             else
             {
@@ -1266,11 +1292,12 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
             HasDuplicateGroups = result.Groups.Count > 0;
             DisplayedScanMode = FormatScanMode(SelectedMode);
 
-            AllDuplicateGroups.Clear();
+            List<DuplicateGroupViewModel> newDuplicateGroups = new(result.Groups.Count);
             foreach (DuplicateGroup group in result.Groups)
             {
-                AllDuplicateGroups.Add(new DuplicateGroupViewModel(group));
+                newDuplicateGroups.Add(new DuplicateGroupViewModel(group));
             }
+            AllDuplicateGroups.ReplaceAll(newDuplicateGroups);
 
             ActiveTab = "Duplicates";
             ApplyFilter();
@@ -1541,6 +1568,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
 
     public void Dispose()
     {
+        _searchDebounceTimer?.Stop();
         _elapsedTimer.Stop();
         _driveDetector.DriveChanged -= OnDriveChanged;
         _driveDetector.Dispose();
