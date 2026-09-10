@@ -79,6 +79,22 @@ public partial class MainWindow : Window
         }
     }
 
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+
+        if (e.KeyModifiers.HasFlag(KeyModifiers.Control) && e.Key == Key.F)
+        {
+            TextBox? searchBox = this.FindControl<TextBox>("SearchBox");
+            if (searchBox is not null)
+            {
+                searchBox.Focus();
+                searchBox.SelectAll();
+                e.Handled = true;
+            }
+        }
+    }
+
     private async void OnBrowseSourceClicked(object? sender, RoutedEventArgs e)
     {
         IStorageProvider storageProvider = TopLevel.GetTopLevel(this)!.StorageProvider;

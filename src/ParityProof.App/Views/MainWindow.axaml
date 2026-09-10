@@ -21,6 +21,16 @@
 
     <Window.KeyBindings>
         <KeyBinding Gesture="Escape" Command="{Binding CloseInspectorCommand}"/>
+        <KeyBinding Gesture="Ctrl+R" Command="{Binding VerifyCommand}"/>
+        <KeyBinding Gesture="F5" Command="{Binding VerifyCommand}"/>
+        <KeyBinding Gesture="Ctrl+P" Command="{Binding RequestPauseResumeCommand}"/>
+        <KeyBinding Gesture="Ctrl+Shift+C" Command="{Binding CopyMissingCommand}"/>
+        <KeyBinding Gesture="Ctrl+D" Command="{Binding ScanDuplicatesCommand}"/>
+        <KeyBinding Gesture="Ctrl+1" Command="{Binding SetActiveTabCommand}" CommandParameter="All"/>
+        <KeyBinding Gesture="Ctrl+2" Command="{Binding SetActiveTabCommand}" CommandParameter="Verified"/>
+        <KeyBinding Gesture="Ctrl+3" Command="{Binding SetActiveTabCommand}" CommandParameter="Missing"/>
+        <KeyBinding Gesture="Ctrl+4" Command="{Binding SetActiveTabCommand}" CommandParameter="Corrupt"/>
+        <KeyBinding Gesture="Ctrl+5" Command="{Binding SetActiveTabCommand}" CommandParameter="Duplicates"/>
     </Window.KeyBindings>
 
     <Grid RowDefinitions="Auto,Auto,*" Margin="20">
@@ -34,12 +44,16 @@
 
             <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                 <Button Content="Export HTML" Command="{Binding ExportReportCommand}" CommandParameter="html"
+                        AutomationProperties.Name="Export HTML Verification Report"
                         Background="#1E293B" Foreground="#E2E8F0" BorderBrush="#334155" Padding="12,6"/>
                 <Button Content="Export CSV" Command="{Binding ExportReportCommand}" CommandParameter="csv"
+                        AutomationProperties.Name="Export CSV Verification Report"
                         Background="#1E293B" Foreground="#E2E8F0" BorderBrush="#334155" Padding="12,6"/>
                 <Button Content="Export JSON" Command="{Binding ExportReportCommand}" CommandParameter="json"
+                        AutomationProperties.Name="Export JSON Verification Report"
                         Background="#1E293B" Foreground="#E2E8F0" BorderBrush="#334155" Padding="12,6"/>
                 <Button Content="📂 Open Report" Command="{Binding OpenLastReportCommand}"
+                        AutomationProperties.Name="Open Exported Verification Report"
                         IsVisible="{Binding HasExportedReport}"
                         Background="#0F766E" Foreground="#F0FDFA" BorderBrush="#14B8A6" Padding="12,6"/>
             </StackPanel>
@@ -188,6 +202,7 @@
                                 <TextBlock Grid.Column="1" Text="{Binding BatchProgressSummaryText}" FontSize="11" FontWeight="SemiBold" Foreground="#F8FAFC"/>
                             </Grid>
                             <ProgressBar Value="{Binding BatchProgressPercentage}"
+                                         AutomationProperties.Name="Batch Verification Progress"
                                          IsIndeterminate="{Binding IsBatchIndeterminate}"
                                          Maximum="100" Height="8" CornerRadius="4"
                                          Foreground="{Binding OperationAccentColor}" Background="#1E293B"/>
@@ -200,6 +215,7 @@
                                 <TextBlock Grid.Column="1" Text="{Binding CurrentFileProgressText}" FontSize="10" Foreground="#94A3B8"/>
                             </Grid>
                             <ProgressBar Value="{Binding CurrentFileProgressPercentage}" Maximum="100" Height="5" CornerRadius="3"
+                                         AutomationProperties.Name="Current File Transfer Progress"
                                          Foreground="#38BDF8" Background="#1E293B"/>
                         </StackPanel>
                     </StackPanel>
@@ -249,9 +265,11 @@
                             <TextBlock Text="SOURCE STORAGE (CARD / FOLDER)" FontSize="11" FontWeight="Bold" Foreground="#64748B"/>
                             <Grid ColumnDefinitions="*,Auto">
                                 <TextBox Grid.Column="0" Text="{Binding SourcePath, Mode=TwoWay}" PlaceholderText="Path to SD card or folder..."
+                                         AutomationProperties.Name="Source Media Storage Path" TabIndex="1"
                                          Background="#1E293B" Foreground="#F8FAFC" BorderBrush="#334155"/>
                                 <Button Grid.Column="1" Content="Browse" Click="OnBrowseSourceClicked"
-                                         Background="#334155" Foreground="#F8FAFC" Margin="6,0,0,0"/>
+                                        AutomationProperties.Name="Browse for Source Storage Folder" TabIndex="2"
+                                        Background="#334155" Foreground="#F8FAFC" Margin="6,0,0,0"/>
                             </Grid>
                         </StackPanel>
 
@@ -260,6 +278,7 @@
                             <Grid ColumnDefinitions="*,Auto">
                                 <TextBlock Grid.Column="0" Text="BACKUP DESTINATIONS" FontSize="11" FontWeight="Bold" Foreground="#64748B" VerticalAlignment="Center"/>
                                 <Button Grid.Column="1" Content="+ Add Dest" Click="OnAddDestinationClicked"
+                                        AutomationProperties.Name="Add Backup Destination Folder" TabIndex="3"
                                         Background="#1E293B" Foreground="#38BDF8" BorderBrush="#334155" Padding="8,4" FontSize="11"/>
                             </Grid>
 
@@ -415,16 +434,22 @@
                         <!-- Actions -->
                         <StackPanel Spacing="10" Margin="0,10,0,0">
                             <Button Content="VERIFY BACKUPS" Command="{Binding VerifyCommand}"
+                                    HotKey="Ctrl+R" AutomationProperties.Name="Verify Backups (Ctrl+R)"
+                                    TabIndex="10"
                                     IsEnabled="{Binding CanStartOperation}"
                                     HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
                                     Background="#2563EB" Foreground="#FFFFFF" FontWeight="Bold" Padding="14"/>
 
                             <Button Content="SCAN FOR DUPLICATES" Command="{Binding ScanDuplicatesCommand}"
+                                    HotKey="Ctrl+D" AutomationProperties.Name="Scan for Duplicates (Ctrl+D)"
+                                    TabIndex="11"
                                     IsEnabled="{Binding CanStartOperation}"
                                     HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
                                     Background="#0F766E" Foreground="#FFFFFF" FontWeight="Bold" Padding="12"/>
 
                             <Button Content="COPY MISSING TO BACKUP" Command="{Binding CopyMissingCommand}"
+                                    HotKey="Ctrl+Shift+C" AutomationProperties.Name="Copy Missing Files to Backup Destinations (Ctrl+Shift+C)"
+                                    TabIndex="12"
                                     IsVisible="{Binding HasMissingFiles}" IsEnabled="{Binding CanStartCopy}"
                                     HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
                                     Background="#D97706" Foreground="#FFFFFF" FontWeight="Bold" Padding="14"/>
@@ -432,10 +457,12 @@
                             <!-- Sidebar Operation Controls (Pause/Resume and Cancel) -->
                             <Grid ColumnDefinitions="*,*" Margin="0,2,0,0">
                                 <Button Grid.Column="0" Content="{Binding PauseResumeButtonText}" Command="{Binding RequestPauseResumeCommand}"
+                                        AutomationProperties.Name="Pause or Resume Current Operation (Ctrl+P)"
                                         IsEnabled="{Binding CanPauseResume}"
                                         HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
                                         Background="{Binding PauseResumeButtonBackground}" Foreground="#FFFFFF" FontWeight="Bold" Padding="10" Margin="0,0,4,0"/>
                                 <Button Grid.Column="1" Content="⏹ CANCEL" Command="{Binding RequestCancelCommand}"
+                                        AutomationProperties.Name="Cancel Active Operation"
                                         IsEnabled="{Binding IsOperationActive}"
                                         HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
                                         Background="#EF4444" Foreground="#FFFFFF" FontWeight="Bold" Padding="10" Margin="4,0,0,0"/>
@@ -462,26 +489,31 @@
                         <!-- Filter Tabs -->
                         <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="4">
                             <Button Content="All" Command="{Binding SetActiveTabCommand}" CommandParameter="All"
+                                    AutomationProperties.Name="Filter All Media Files (Ctrl+1)"
                                     Background="{Binding ActiveTab, Converter={x:Static conv:TabActiveBackgroundConverter.Instance}, ConverterParameter=All}"
                                     BorderBrush="{Binding ActiveTab, Converter={x:Static conv:TabActiveBorderBrushConverter.Instance}, ConverterParameter=All}"
                                     BorderThickness="1" CornerRadius="6"
                                     Foreground="#F8FAFC" Padding="12,6" FontSize="12"/>
                             <Button Content="Verified" Command="{Binding SetActiveTabCommand}" CommandParameter="Verified"
+                                    AutomationProperties.Name="Filter Verified Media Files (Ctrl+2)"
                                     Background="{Binding ActiveTab, Converter={x:Static conv:TabActiveBackgroundConverter.Instance}, ConverterParameter=Verified}"
                                     BorderBrush="{Binding ActiveTab, Converter={x:Static conv:TabActiveBorderBrushConverter.Instance}, ConverterParameter=Verified}"
                                     BorderThickness="1" CornerRadius="6"
                                     Foreground="#34D399" Padding="12,6" FontSize="12"/>
                             <Button Content="Missing" Command="{Binding SetActiveTabCommand}" CommandParameter="Missing"
+                                    AutomationProperties.Name="Filter Missing Media Files (Ctrl+3)"
                                     Background="{Binding ActiveTab, Converter={x:Static conv:TabActiveBackgroundConverter.Instance}, ConverterParameter=Missing}"
                                     BorderBrush="{Binding ActiveTab, Converter={x:Static conv:TabActiveBorderBrushConverter.Instance}, ConverterParameter=Missing}"
                                     BorderThickness="1" CornerRadius="6"
                                     Foreground="#FB7185" Padding="12,6" FontSize="12"/>
                             <Button Content="Corrupt" Command="{Binding SetActiveTabCommand}" CommandParameter="Corrupt"
+                                    AutomationProperties.Name="Filter Corrupt Media Files (Ctrl+4)"
                                     Background="{Binding ActiveTab, Converter={x:Static conv:TabActiveBackgroundConverter.Instance}, ConverterParameter=Corrupt}"
                                     BorderBrush="{Binding ActiveTab, Converter={x:Static conv:TabActiveBorderBrushConverter.Instance}, ConverterParameter=Corrupt}"
                                     BorderThickness="1" CornerRadius="6"
                                     Foreground="#FBBF24" Padding="12,6" FontSize="12"/>
                             <Button Command="{Binding SetActiveTabCommand}" CommandParameter="Duplicates"
+                                    AutomationProperties.Name="Filter Duplicate Media Files (Ctrl+5)"
                                     Background="{Binding ActiveTab, Converter={x:Static conv:TabActiveBackgroundConverter.Instance}, ConverterParameter=Duplicates}"
                                     BorderBrush="{Binding ActiveTab, Converter={x:Static conv:TabActiveBorderBrushConverter.Instance}, ConverterParameter=Duplicates}"
                                     BorderThickness="1" CornerRadius="6"
@@ -497,14 +529,19 @@
 
                         <!-- Search Box & Column Visibility Flyout & Inspector Toggle -->
                         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
-                            <TextBox Text="{Binding SearchText, Mode=TwoWay}" PlaceholderText="Search files..." Width="200"
+                            <TextBox x:Name="SearchBox" Text="{Binding SearchText, Mode=TwoWay}" PlaceholderText="Search files... (Ctrl+F)" Width="200"
+                                     AutomationProperties.Name="Search Media Files (Ctrl+F)"
+                                     ToolTip.Tip="Search media by filename or relative path (Ctrl+F)"
                                      Background="#1E293B" Foreground="#F8FAFC" BorderBrush="#334155"/>
                             <ToggleButton IsChecked="{Binding IsInspectorOpen, Mode=TwoWay}"
                                           Content="Inspector ◫"
+                                          AutomationProperties.Name="Toggle Media Inspector Panel (Esc)"
                                           Background="#1E293B" Foreground="#94A3B8" BorderBrush="#334155"
                                           Padding="10,6" FontSize="12"
                                           ToolTip.Tip="Toggle Media Inspector Panel (Esc)"/>
-                            <Button Content="Columns ▾" Background="#1E293B" Foreground="#94A3B8" BorderBrush="#334155" Padding="10,6" FontSize="12">
+                            <Button Content="Columns ▾"
+                                    AutomationProperties.Name="Toggle Column Visibility"
+                                    Background="#1E293B" Foreground="#94A3B8" BorderBrush="#334155" Padding="10,6" FontSize="12">
                                 <Button.Flyout>
                                     <Flyout Placement="BottomEdgeAlignedRight">
                                         <Border Background="#1E293B" BorderBrush="#334155" BorderThickness="1" CornerRadius="6" Padding="12,10">
