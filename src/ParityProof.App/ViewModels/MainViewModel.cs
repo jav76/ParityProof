@@ -563,22 +563,25 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
 
     private void OnDriveChanged(object? sender, DriveNotificationEventArgs e)
     {
-        if (e.EventType == DriveEventType.Inserted)
+        Dispatcher.UIThread.Post(() =>
         {
-            if (string.IsNullOrEmpty(SourcePath))
+            if (e.EventType == DriveEventType.Inserted)
             {
-                SourcePath = e.DrivePath;
+                if (string.IsNullOrEmpty(SourcePath))
+                {
+                    SourcePath = e.DrivePath;
+                }
+                StatusMessage = $"Removable media detected: {e.VolumeLabel} ({e.DrivePath})";
             }
-            StatusMessage = $"Removable media detected: {e.VolumeLabel} ({e.DrivePath})";
-        }
-        else if (e.EventType == DriveEventType.Removed)
-        {
-            StatusMessage = $"Drive removed: {e.DrivePath}";
-            if (string.Equals(SourcePath, e.DrivePath, StringComparison.OrdinalIgnoreCase))
+            else if (e.EventType == DriveEventType.Removed)
             {
-                SourcePath = string.Empty;
+                StatusMessage = $"Drive removed: {e.DrivePath}";
+                if (string.Equals(SourcePath, e.DrivePath, StringComparison.OrdinalIgnoreCase))
+                {
+                    SourcePath = string.Empty;
+                }
             }
-        }
+        });
     }
 
     private DispatcherTimer? _searchDebounceTimer;
