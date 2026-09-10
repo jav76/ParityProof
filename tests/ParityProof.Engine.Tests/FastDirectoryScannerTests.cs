@@ -48,6 +48,32 @@ public sealed class FastDirectoryScannerTests : IDisposable
         Assert.DoesNotContain(allMediaWithSidecars, f => f.FullPath.EndsWith(".txt", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Fact]
+    public void ScanDirectory_DoesNotInfiniteLoopOnCircularSymlinks()
+    {
+        string mediaDir = Path.Combine(_testDir, "symlink_test", "DCIM");
+        Directory.CreateDirectory(mediaDir);
+
+        File.WriteAllBytes(Path.Combine(mediaDir, "PHOTO1.JPG"), new byte[512]);
+
+        string loopDir = Path.Combine(mediaDir, "loop_link");
+        try
+        {
+            Directory.CreateSymbolicLink(loopDir, _testDir);
+        }
+        catch (Exception)
+        {
+            return;
+        }
+
+        IReadOnlyList<MediaFile> files = FastDirectoryScanner.ScanDirectory(
+            _testDir,
+            FilterPreset.PhotosOnly);
+
+        Assert.Single(files);
+        Assert.EndsWith("PHOTO1.JPG", files[0].FullPath);
+    }
+
     public void Dispose()
     {
         try

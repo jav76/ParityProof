@@ -105,6 +105,10 @@ public static class FastDirectoryScanner
             Path.DirectorySeparatorChar,
             Path.AltDirectorySeparatorChar);
 
+        ConcurrentDictionary<string, byte> visitedDirectories = new(
+            OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        visitedDirectories.TryAdd(normalizedRoot, 0);
+
         int workerCount = StorageMediaDetector.GetRecommendedWorkerCount(rootPath);
         Channel<string> dirQueue = Channel.CreateUnbounded<string>(new UnboundedChannelOptions
         {
@@ -218,10 +222,23 @@ public static class FastDirectoryScanner
                                 {
                                     if (entry.IsDirectory)
                                     {
+                                        if ((entry.Attributes & FileAttributes.ReparsePoint) != 0)
+                                        {
+                                            return false;
+                                        }
+
                                         string dirName = entry.FileName.ToString();
                                         if (!IgnoredDirectories.Contains(dirName))
                                         {
-                                            subDirectoriesToEnqueue.Add(entry.ToFullPath());
+                                            string subDirPath = entry.ToFullPath();
+                                            string canonicalSubDir = Path.GetFullPath(subDirPath).TrimEnd(
+                                                Path.DirectorySeparatorChar,
+                                                Path.AltDirectorySeparatorChar);
+
+                                            if (visitedDirectories.TryAdd(canonicalSubDir, 0))
+                                            {
+                                                subDirectoriesToEnqueue.Add(subDirPath);
+                                            }
                                         }
                                         return false;
                                     }
