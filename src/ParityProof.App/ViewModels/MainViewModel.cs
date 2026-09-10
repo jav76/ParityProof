@@ -346,14 +346,56 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
 
             if (thumbBytes is not null && thumbBytes.Length > 0)
             {
-                using MemoryStream ms = new(thumbBytes);
-                Bitmap bitmap = Bitmap.DecodeToWidth(ms, 360);
-                if (ct.IsCancellationRequested)
+                try
                 {
-                    bitmap.Dispose();
-                    return;
+                    using MemoryStream ms = new(thumbBytes);
+                    Bitmap bitmap = Bitmap.DecodeToWidth(ms, 360);
+                    if (ct.IsCancellationRequested)
+                    {
+                        bitmap.Dispose();
+                        return;
+                    }
+
+                    InspectorThumbnail = bitmap;
                 }
-                InspectorThumbnail = bitmap;
+                catch
+                {
+                    // Fall back to direct file stream decoding if thumbnail bytes are malformed
+                }
+            }
+
+            if (InspectorThumbnail is null && !ct.IsCancellationRequested)
+            {
+                string ext = Path.GetExtension(filePath).ToLowerInvariant();
+                if (ext is ".jpg" or ".jpeg" or ".png" or ".webp" or ".bmp" or ".tif" or ".tiff")
+                {
+                    Bitmap? streamedBitmap = await Task.Run(() =>
+                    {
+                        try
+                        {
+                            using FileStream fs = new(
+                                filePath,
+                                FileMode.Open,
+                                FileAccess.Read,
+                                FileShare.ReadWrite | FileShare.Delete,
+                                4096,
+                                FileOptions.SequentialScan);
+                            return Bitmap.DecodeToWidth(fs, 360);
+                        }
+                        catch
+                        {
+                            return null;
+                        }
+                    }, ct).ConfigureAwait(true);
+
+                    if (ct.IsCancellationRequested)
+                    {
+                        streamedBitmap?.Dispose();
+                        return;
+                    }
+
+                    InspectorThumbnail = streamedBitmap;
+                }
             }
         }
         catch

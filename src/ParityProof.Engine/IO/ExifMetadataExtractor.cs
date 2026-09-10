@@ -68,19 +68,6 @@ public static class ExifMetadataExtractor
             return null;
         }
 
-        string ext = Path.GetExtension(filePath).ToLowerInvariant();
-        if (ext is ".jpg" or ".jpeg" or ".png" or ".webp")
-        {
-            try
-            {
-                return File.ReadAllBytes(filePath);
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
         try
         {
             using FileStream stream = new(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
@@ -109,11 +96,19 @@ public static class ExifMetadataExtractor
             {
                 byte[] thumbBytes = new byte[thumbLength];
                 stream.Seek(thumbOffset, SeekOrigin.Begin);
-                int thumbRead = stream.Read(thumbBytes, 0, thumbLength);
-                if (thumbRead == thumbLength)
+                int totalRead = 0;
+                while (totalRead < thumbLength)
                 {
-                    return thumbBytes;
+                    int chunkRead = stream.Read(thumbBytes, totalRead, thumbLength - totalRead);
+                    if (chunkRead <= 0)
+                    {
+                        return null;
+                    }
+
+                    totalRead += chunkRead;
                 }
+
+                return thumbBytes;
             }
         }
         catch
@@ -348,6 +343,36 @@ public static class ExifMetadataExtractor
             else if (tag == TAG_JPEG_LENGTH)
             {
                 thumbLength = ReadNumericValue(tiffData, ifdOffset + 8, type, isLittleEndian);
+            }
+        }
+
+        if (thumbOffset == 0 || thumbLength == 0)
+        {
+            int nextIfdPtr = (int)ifd0Offset + 2 + (entryCount * 12);
+            if (nextIfdPtr + 4 <= tiffData.Length)
+            {
+                uint ifd1Offset = ReadUInt32(tiffData, nextIfdPtr, isLittleEndian);
+                if (ifd1Offset > 0 && ifd1Offset + 2 <= tiffData.Length)
+                {
+                    int ifd1Pos = (int)ifd1Offset;
+                    ushort ifd1Count = ReadUInt16(tiffData, ifd1Pos, isLittleEndian);
+                    ifd1Pos += 2;
+
+                    for (int i = 0; i < ifd1Count && ifd1Pos + 12 <= tiffData.Length; i++, ifd1Pos += 12)
+                    {
+                        ushort tag = ReadUInt16(tiffData, ifd1Pos, isLittleEndian);
+                        ushort type = ReadUInt16(tiffData, ifd1Pos + 2, isLittleEndian);
+
+                        if (tag == TAG_JPEG_OFFSET)
+                        {
+                            thumbOffset = ReadNumericValue(tiffData, ifd1Pos + 8, type, isLittleEndian);
+                        }
+                        else if (tag == TAG_JPEG_LENGTH)
+                        {
+                            thumbLength = ReadNumericValue(tiffData, ifd1Pos + 8, type, isLittleEndian);
+                        }
+                    }
+                }
             }
         }
 

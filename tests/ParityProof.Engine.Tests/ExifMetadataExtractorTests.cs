@@ -75,9 +75,9 @@ public sealed class ExifMetadataExtractorTests : IDisposable
     }
 
     [Fact]
-    public void ExtractThumbnailBytes_JpegFile_ReturnsRawBytes()
+    public void ExtractThumbnailBytes_ImageWithoutEmbeddedThumbnail_ReturnsNull()
     {
-        string jpgPath = Path.Combine(_tempDir, "photo.jpg");
+        string jpgPath = Path.Combine(_tempDir, "plain_photo.jpg");
         byte[] payload = new byte[1024];
         payload[0] = 0xFF;
         payload[1] = 0xD8;
@@ -87,8 +87,36 @@ public sealed class ExifMetadataExtractorTests : IDisposable
 
         byte[]? thumb = ExifMetadataExtractor.ExtractThumbnailBytes(jpgPath);
 
+        // Without an embedded Exif IFD thumbnail, returns null to avoid reading entire file into LOH memory
+        Assert.Null(thumb);
+    }
+
+    [Fact]
+    public void ExtractThumbnailBytes_TiffWithEmbeddedThumbnail_ReturnsThumbnailBytes()
+    {
+        string tiffPath = Path.Combine(_tempDir, "photo.cr2");
+        byte[] expectedThumb = new byte[] { 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x11, 0x22 };
+        byte[] fileBytes = CreateSyntheticTiffWithThumbnail(expectedThumb);
+        File.WriteAllBytes(tiffPath, fileBytes);
+
+        byte[]? thumb = ExifMetadataExtractor.ExtractThumbnailBytes(tiffPath);
+
         Assert.NotNull(thumb);
-        Assert.Equal(payload.Length, thumb.Length);
+        Assert.Equal(expectedThumb, thumb);
+    }
+
+    [Fact]
+    public void ExtractThumbnailBytes_JpegWithIfd1Thumbnail_ReturnsThumbnailBytes()
+    {
+        string jpgPath = Path.Combine(_tempDir, "with_thumb.jpg");
+        byte[] expectedThumb = new byte[] { 0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC };
+        byte[] fileBytes = CreateSyntheticJpegWithIfd1Thumbnail(expectedThumb);
+        File.WriteAllBytes(jpgPath, fileBytes);
+
+        byte[]? thumb = ExifMetadataExtractor.ExtractThumbnailBytes(jpgPath);
+
+        Assert.NotNull(thumb);
+        Assert.Equal(expectedThumb, thumb);
     }
 
     private static byte[] CreateSyntheticTiffRawHeader(
@@ -238,6 +266,131 @@ public sealed class ExifMetadataExtractorTests : IDisposable
         ms.Position = offset;
         bw.Write(num);
         bw.Write(den);
+    }
+
+    private static byte[] CreateSyntheticTiffWithThumbnail(byte[] thumbPayload)
+    {
+        using MemoryStream ms = new();
+        using BinaryWriter bw = new(ms);
+
+        // TIFF Header (Little-Endian)
+        bw.Write((byte)0x49);
+        bw.Write((byte)0x49);
+        bw.Write((ushort)42);
+        bw.Write((uint)8);
+
+        // IFD0: 2 entries for thumbnail offset and length
+        ushort ifd0Count = 2;
+        bw.Write(ifd0Count);
+
+        uint thumbOffset = 64;
+        uint thumbLength = (uint)thumbPayload.Length;
+
+        // TAG_JPEG_OFFSET (0x0201)
+        bw.Write((ushort)0x0201);
+        bw.Write((ushort)4);
+        bw.Write((uint)1);
+        bw.Write(thumbOffset);
+
+        // TAG_JPEG_LENGTH (0x0202)
+        bw.Write((ushort)0x0202);
+        bw.Write((ushort)4);
+        bw.Write((uint)1);
+        bw.Write(thumbLength);
+
+        // Next IFD = 0
+        bw.Write((uint)0);
+
+        while (ms.Position < thumbOffset)
+        {
+            bw.Write((byte)0);
+        }
+
+        bw.Write(thumbPayload);
+        return ms.ToArray();
+    }
+
+    private static byte[] CreateSyntheticJpegWithIfd1Thumbnail(byte[] thumbPayload)
+    {
+        using MemoryStream tiffMs = new();
+        using BinaryWriter tiffBw = new(tiffMs);
+
+        // TIFF Header (Little-Endian)
+        tiffBw.Write((byte)0x49);
+        tiffBw.Write((byte)0x49);
+        tiffBw.Write((ushort)42);
+        tiffBw.Write((uint)8);
+
+        // IFD0: 1 entry, then pointer to IFD1
+        ushort ifd0Count = 1;
+        tiffBw.Write(ifd0Count);
+
+        // Make (0x010F), ASCII, count 1, offset 0
+        tiffBw.Write((ushort)0x010F);
+        tiffBw.Write((ushort)2);
+        tiffBw.Write((uint)1);
+        tiffBw.Write((uint)0);
+
+        // Next IFD pointer (IFD1 offset = 32)
+        uint ifd1Offset = 32;
+        tiffBw.Write(ifd1Offset);
+
+        while (tiffMs.Position < ifd1Offset)
+        {
+            tiffBw.Write((byte)0);
+        }
+
+        // IFD1: 2 entries (TAG_JPEG_OFFSET and TAG_JPEG_LENGTH)
+        ushort ifd1Count = 2;
+        tiffBw.Write(ifd1Count);
+
+        uint thumbOffset = 120;
+        uint thumbLength = (uint)thumbPayload.Length;
+
+        // Entry 1: TAG_JPEG_OFFSET (0x0201)
+        tiffBw.Write((ushort)0x0201);
+        tiffBw.Write((ushort)4);
+        tiffBw.Write((uint)1);
+        tiffBw.Write(thumbOffset);
+
+        // Entry 2: TAG_JPEG_LENGTH (0x0202)
+        tiffBw.Write((ushort)0x0202);
+        tiffBw.Write((ushort)4);
+        tiffBw.Write((uint)1);
+        tiffBw.Write(thumbLength);
+
+        // Next IFD = 0
+        tiffBw.Write((uint)0);
+
+        while (tiffMs.Position < thumbOffset)
+        {
+            tiffBw.Write((byte)0);
+        }
+
+        tiffBw.Write(thumbPayload);
+        byte[] tiffBytes = tiffMs.ToArray();
+
+        using MemoryStream jpegMs = new();
+        using BinaryWriter jpegBw = new(jpegMs);
+
+        // SOI
+        jpegBw.Write((byte)0xFF);
+        jpegBw.Write((byte)0xD8);
+
+        // APP1 Marker
+        jpegBw.Write((byte)0xFF);
+        jpegBw.Write((byte)0xE1);
+
+        ushort app1PayloadLength = (ushort)(2 + 6 + tiffBytes.Length);
+        jpegBw.Write(BinaryPrimitives.ReverseEndianness(app1PayloadLength));
+        jpegBw.Write(Encoding.ASCII.GetBytes("Exif\0\0"));
+        jpegBw.Write(tiffBytes);
+
+        // EOI
+        jpegBw.Write((byte)0xFF);
+        jpegBw.Write((byte)0xD9);
+
+        return jpegMs.ToArray();
     }
 
     public void Dispose()
