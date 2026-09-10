@@ -67,9 +67,13 @@ public sealed class ReportGeneratorTests : IDisposable
         Assert.True(new FileInfo(htmlPath).Length > 0);
         string htmlContent = await File.ReadAllTextAsync(htmlPath);
         Assert.Contains("SAFE TO FORMAT", htmlContent);
+        Assert.Contains("Checksum (xxHash)", htmlContent);
+        Assert.Contains("0x000000000000014D", htmlContent); // 333UL in hex
 
         Assert.True(File.Exists(csvPath));
         Assert.True(new FileInfo(csvPath).Length > 0);
+        string csvContent = await File.ReadAllTextAsync(csvPath);
+        Assert.Contains("RelativePath,FileSizeBytes,Category,OverallStatus,HeadHash,TailHash,DeepHash,FullHash,DestinationStatuses", csvContent);
 
         Assert.True(File.Exists(jsonPath));
         Assert.True(new FileInfo(jsonPath).Length > 0);

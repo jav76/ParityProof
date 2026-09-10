@@ -21,7 +21,7 @@ public sealed class CsvReportGenerator : IReportGenerator
         CancellationToken cancellationToken = default)
     {
         StringBuilder sb = new();
-        sb.AppendLine("RelativePath,FileSizeBytes,Category,OverallStatus,HeadHash,TailHash,FullHash,DestinationStatuses");
+        sb.AppendLine("RelativePath,FileSizeBytes,Category,OverallStatus,HeadHash,TailHash,DeepHash,FullHash,DestinationStatuses");
 
         foreach (VerificationResultItem item in results)
         {
@@ -40,7 +40,7 @@ public sealed class CsvReportGenerator : IReportGenerator
             }
             string destsFormatted = string.Join(";", destPairs);
 
-            sb.AppendLine($"\"{EscapeCsv(item.SourceFile.RelativePath)}\",{item.SourceFile.FileLength},{item.SourceFile.Category},{overall},{item.SourceFile.HeadHash},{item.SourceFile.TailHash},{item.SourceFile.FullHash},\"{EscapeCsv(destsFormatted)}\"");
+            sb.AppendLine($"\"{EscapeCsv(item.SourceFile.RelativePath)}\",{item.SourceFile.FileLength},{item.SourceFile.Category},{overall},{item.SourceFile.HeadHash},{item.SourceFile.TailHash},{item.SourceFile.DeepHash},{item.SourceFile.FullHash},\"{EscapeCsv(destsFormatted)}\"");
         }
 
         if (summary.DuplicateAnalysis is not null && summary.DuplicateAnalysis.Groups.Count > 0)

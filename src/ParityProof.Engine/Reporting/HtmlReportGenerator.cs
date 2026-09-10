@@ -89,6 +89,7 @@ public sealed class HtmlReportGenerator : IReportGenerator
         sb.AppendLine("          <th>Size</th>");
         sb.AppendLine("          <th>Category</th>");
         sb.AppendLine("          <th>Status</th>");
+        sb.AppendLine("          <th>Checksum (xxHash)</th>");
         sb.AppendLine("          <th>Destination Details</th>");
         sb.AppendLine("        </tr>");
         sb.AppendLine("      </thead>");
@@ -102,6 +103,14 @@ public sealed class HtmlReportGenerator : IReportGenerator
                     ? "<span class=\"badge badge-warn\">Partial</span>"
                     : "<span class=\"badge badge-err\">Missing</span>";
 
+            string checksumDisplay = item.SourceFile.FullHash.HasValue
+                ? $"<code style=\"font-family: monospace; font-size: 0.85rem;\">0x{item.SourceFile.FullHash.Value:X16}</code>"
+                : item.SourceFile.DeepHash.HasValue
+                    ? $"<code style=\"font-family: monospace; font-size: 0.85rem;\">0x{item.SourceFile.DeepHash.Value:X16}</code> (Deep)"
+                    : item.SourceFile.HeadHash.HasValue
+                        ? $"<code style=\"font-family: monospace; font-size: 0.85rem;\">0x{item.SourceFile.HeadHash.Value:X16}</code> (Head)"
+                        : "<span style=\"color: #64748b;\">-</span>";
+
             List<string> destDetails = new();
             foreach (KeyValuePair<string, FileMatchStatus> kvp in item.DestinationStatuses)
             {
@@ -114,6 +123,7 @@ public sealed class HtmlReportGenerator : IReportGenerator
             sb.AppendLine($"          <td>{(item.SourceFile.FileLength / (1024.0 * 1024.0)):F2} MB</td>");
             sb.AppendLine($"          <td>{item.SourceFile.Category}</td>");
             sb.AppendLine($"          <td>{statusBadge}</td>");
+            sb.AppendLine($"          <td>{checksumDisplay}</td>");
             sb.AppendLine($"          <td>{destText}</td>");
             sb.AppendLine("        </tr>");
         }
