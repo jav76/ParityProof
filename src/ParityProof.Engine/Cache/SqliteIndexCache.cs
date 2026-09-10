@@ -32,7 +32,8 @@ public sealed class SqliteIndexCache : IIndexCache
         SqliteConnectionStringBuilder builder = new()
         {
             DataSource = dbPath,
-            Mode = SqliteOpenMode.ReadWriteCreate
+            Mode = SqliteOpenMode.ReadWriteCreate,
+            DefaultTimeout = 30
         };
 
         _connectionString = builder.ConnectionString;
@@ -57,7 +58,7 @@ public sealed class SqliteIndexCache : IIndexCache
             await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
 
             await using SqliteCommand pragmaCmd = connection.CreateCommand();
-            pragmaCmd.CommandText = "PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;";
+            pragmaCmd.CommandText = "PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 30000;";
             await pragmaCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
 
             await using SqliteCommand tableCmd = connection.CreateCommand();
@@ -228,57 +229,81 @@ public sealed class SqliteIndexCache : IIndexCache
         IEnumerable<MediaFile> files,
         CancellationToken cancellationToken = default)
     {
-        await EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
-
-        await using SqliteConnection connection = new(_connectionString);
-        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-
-        await using SqliteTransaction transaction = connection.BeginTransaction();
-        await using SqliteCommand command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = @"
-            INSERT INTO MediaCache (
-                FilePath, RelativePath, FileLength, LastWriteTimeUtc, Category, HeadHash, TailHash, DeepHash, FullHash
-            ) VALUES (
-                @path, @relPath, @length, @lastWrite, @category, @headHash, @tailHash, @deepHash, @fullHash
-            ) ON CONFLICT(FilePath) DO UPDATE SET
-                RelativePath = excluded.RelativePath,
-                FileLength = excluded.FileLength,
-                LastWriteTimeUtc = excluded.LastWriteTimeUtc,
-                Category = excluded.Category,
-                HeadHash = excluded.HeadHash,
-                TailHash = excluded.TailHash,
-                DeepHash = excluded.DeepHash,
-                FullHash = excluded.FullHash;";
-
-        SqliteParameter pathParam = command.Parameters.Add("@path", SqliteType.Text);
-        SqliteParameter relPathParam = command.Parameters.Add("@relPath", SqliteType.Text);
-        SqliteParameter lengthParam = command.Parameters.Add("@length", SqliteType.Integer);
-        SqliteParameter lastWriteParam = command.Parameters.Add("@lastWrite", SqliteType.Integer);
-        SqliteParameter categoryParam = command.Parameters.Add("@category", SqliteType.Integer);
-        SqliteParameter headHashParam = command.Parameters.Add("@headHash", SqliteType.Integer);
-        SqliteParameter tailHashParam = command.Parameters.Add("@tailHash", SqliteType.Integer);
-        SqliteParameter deepHashParam = command.Parameters.Add("@deepHash", SqliteType.Integer);
-        SqliteParameter fullHashParam = command.Parameters.Add("@fullHash", SqliteType.Integer);
-
-        foreach (MediaFile file in files)
+        List<MediaFile> fileList = files as List<MediaFile> ?? files.ToList();
+        if (fileList.Count == 0)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            pathParam.Value = file.FullPath;
-            relPathParam.Value = file.RelativePath;
-            lengthParam.Value = file.FileLength;
-            lastWriteParam.Value = file.LastWriteTimeUtc.Ticks;
-            categoryParam.Value = (int)file.Category;
-            headHashParam.Value = file.HeadHash.HasValue ? (long)file.HeadHash.Value : DBNull.Value;
-            tailHashParam.Value = file.TailHash.HasValue ? (long)file.TailHash.Value : DBNull.Value;
-            deepHashParam.Value = file.DeepHash.HasValue ? (long)file.DeepHash.Value : DBNull.Value;
-            fullHashParam.Value = file.FullHash.HasValue ? (long)file.FullHash.Value : DBNull.Value;
-
-            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            return;
         }
 
-        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        await EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
+
+        const int MAX_RETRIES = 3;
+        for (int attempt = 1; attempt <= MAX_RETRIES; attempt++)
+        {
+            try
+            {
+                await using SqliteConnection connection = new(_connectionString);
+                await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+
+                await using SqliteTransaction transaction = connection.BeginTransaction();
+                await using SqliteCommand command = connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = @"
+                    INSERT INTO MediaCache (
+                        FilePath, RelativePath, FileLength, LastWriteTimeUtc, Category, HeadHash, TailHash, DeepHash, FullHash
+                    ) VALUES (
+                        @path, @relPath, @length, @lastWrite, @category, @headHash, @tailHash, @deepHash, @fullHash
+                    ) ON CONFLICT(FilePath) DO UPDATE SET
+                        RelativePath = excluded.RelativePath,
+                        FileLength = excluded.FileLength,
+                        LastWriteTimeUtc = excluded.LastWriteTimeUtc,
+                        Category = excluded.Category,
+                        HeadHash = excluded.HeadHash,
+                        TailHash = excluded.TailHash,
+                        DeepHash = excluded.DeepHash,
+                        FullHash = excluded.FullHash;";
+
+                SqliteParameter pathParam = command.Parameters.Add("@path", SqliteType.Text);
+                SqliteParameter relPathParam = command.Parameters.Add("@relPath", SqliteType.Text);
+                SqliteParameter lengthParam = command.Parameters.Add("@length", SqliteType.Integer);
+                SqliteParameter lastWriteParam = command.Parameters.Add("@lastWrite", SqliteType.Integer);
+                SqliteParameter categoryParam = command.Parameters.Add("@category", SqliteType.Integer);
+                SqliteParameter headHashParam = command.Parameters.Add("@headHash", SqliteType.Integer);
+                SqliteParameter tailHashParam = command.Parameters.Add("@tailHash", SqliteType.Integer);
+                SqliteParameter deepHashParam = command.Parameters.Add("@deepHash", SqliteType.Integer);
+                SqliteParameter fullHashParam = command.Parameters.Add("@fullHash", SqliteType.Integer);
+
+                foreach (MediaFile file in fileList)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    pathParam.Value = file.FullPath;
+                    relPathParam.Value = file.RelativePath;
+                    lengthParam.Value = file.FileLength;
+                    lastWriteParam.Value = file.LastWriteTimeUtc.Ticks;
+                    categoryParam.Value = (int)file.Category;
+                    headHashParam.Value = file.HeadHash.HasValue ? (long)file.HeadHash.Value : DBNull.Value;
+                    tailHashParam.Value = file.TailHash.HasValue ? (long)file.TailHash.Value : DBNull.Value;
+                    deepHashParam.Value = file.DeepHash.HasValue ? (long)file.DeepHash.Value : DBNull.Value;
+                    fullHashParam.Value = file.FullHash.HasValue ? (long)file.FullHash.Value : DBNull.Value;
+
+                    await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+                }
+
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                return;
+            }
+            catch (SqliteException ex) when (ex.SqliteErrorCode is 5 or 6 && attempt < MAX_RETRIES)
+            {
+                int delayMs = 50 * (int)Math.Pow(3, attempt - 1);
+                AppLogger.Logger.Warning(
+                    ex,
+                    "SQLite lock contention on UpsertBatchAsync attempt {Attempt}. Retrying in {DelayMs} ms",
+                    attempt,
+                    delayMs);
+                await Task.Delay(delayMs, cancellationToken).ConfigureAwait(false);
+            }
+        }
     }
 
     public async Task<IReadOnlyList<MediaFile>> GetByLengthAsync(

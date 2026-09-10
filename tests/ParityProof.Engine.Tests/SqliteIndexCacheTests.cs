@@ -179,6 +179,63 @@ public sealed class SqliteIndexCacheTests : IAsyncDisposable
         }
     }
 
+    [Fact]
+    public async Task UpsertBatchAsync_HandlesConcurrentWritesGracefully()
+    {
+        string dbPath = Path.Combine(Path.GetTempPath(), "ParityProof_ConcurrentTest_" + Guid.NewGuid().ToString("N") + ".db");
+        try
+        {
+            List<Task> concurrentUpsertTasks = new();
+            const int TASK_COUNT = 5;
+            const int FILES_PER_TASK = 20;
+
+            for (int t = 0; t < TASK_COUNT; t++)
+            {
+                int taskId = t;
+                concurrentUpsertTasks.Add(Task.Run(async () =>
+                {
+                    await using SqliteIndexCache localCache = new(dbPath);
+                    List<MediaFile> files = new();
+                    for (int f = 0; f < FILES_PER_TASK; f++)
+                    {
+                        files.Add(new MediaFile(
+                            RelativePath: $"task_{taskId}/file_{f}.jpg",
+                            FullPath: $"/media/task_{taskId}/file_{f}.jpg",
+                            FileLength: 1000 + f,
+                            LastWriteTimeUtc: new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc),
+                            Category: MediaCategory.PhotoStandard,
+                            HeadHash: (ulong)(taskId * 100 + f)));
+                    }
+
+                    await localCache.UpsertBatchAsync(files);
+                }));
+            }
+
+            await Task.WhenAll(concurrentUpsertTasks);
+
+            await using SqliteIndexCache verifyCache = new(dbPath);
+            for (int t = 0; t < TASK_COUNT; t++)
+            {
+                for (int f = 0; f < FILES_PER_TASK; f++)
+                {
+                    MediaFile? retrieved = await verifyCache.GetAsync(
+                        $"/media/task_{t}/file_{f}.jpg",
+                        1000 + f,
+                        new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+                    Assert.NotNull(retrieved);
+                    Assert.Equal((ulong)(t * 100 + f), retrieved.HeadHash);
+                }
+            }
+        }
+        finally
+        {
+            if (File.Exists(dbPath))
+            {
+                File.Delete(dbPath);
+            }
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         await _cache.DisposeAsync();
