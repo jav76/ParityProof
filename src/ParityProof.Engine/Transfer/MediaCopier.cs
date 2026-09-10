@@ -295,6 +295,30 @@ public sealed class MediaCopier : IMediaCopier
                         }
 
                         File.Move(tempPath, destPath, overwrite: true);
+
+                        try
+                        {
+                            if (file.LastWriteTimeUtc != default)
+                            {
+                                File.SetLastWriteTimeUtc(destPath, file.LastWriteTimeUtc);
+                            }
+
+                            if (File.Exists(file.FullPath))
+                            {
+                                DateTime creationTimeUtc = File.GetCreationTimeUtc(file.FullPath);
+                                if (creationTimeUtc != default)
+                                {
+                                    File.SetCreationTimeUtc(destPath, creationTimeUtc);
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            AppLogger.Logger.Warning(
+                                ex,
+                                "Failed to preserve timestamps for destination file {DestinationPath}",
+                                destPath);
+                        }
                     }
 
                     completedFiles++;

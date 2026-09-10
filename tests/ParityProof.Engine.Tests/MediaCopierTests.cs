@@ -55,6 +55,44 @@ public sealed class MediaCopierTests : IDisposable
     }
 
     [Fact]
+    public async Task CopyMissingFilesAsync_PreservesSourceFileTimestamps()
+    {
+        string srcDir = Path.Combine(_testDir, "timestamp_src");
+        string dstDir = Path.Combine(_testDir, "timestamp_dst");
+        Directory.CreateDirectory(srcDir);
+        Directory.CreateDirectory(dstDir);
+
+        string srcFilePath = Path.Combine(srcDir, "IMG_HISTORIC.JPG");
+        byte[] payload = new byte[8 * 1024];
+        Random.Shared.NextBytes(payload);
+        File.WriteAllBytes(srcFilePath, payload);
+
+        DateTime historicLastWrite = new(2023, 5, 12, 14, 30, 0, DateTimeKind.Utc);
+        File.SetLastWriteTimeUtc(srcFilePath, historicLastWrite);
+
+        MediaFile mediaFile = new(
+            RelativePath: "IMG_HISTORIC.JPG",
+            FullPath: srcFilePath,
+            FileLength: payload.Length,
+            LastWriteTimeUtc: historicLastWrite,
+            Category: MediaCategory.PhotoStandard);
+
+        int copied = await _copier.CopyMissingFilesAsync(
+            new[] { mediaFile },
+            dstDir);
+
+        Assert.Equal(1, copied);
+
+        string expectedDstPath = Path.Combine(dstDir, "IMG_HISTORIC.JPG");
+        Assert.True(File.Exists(expectedDstPath));
+
+        DateTime actualDstLastWrite = File.GetLastWriteTimeUtc(expectedDstPath);
+        Assert.True(
+            Math.Abs((actualDstLastWrite - historicLastWrite).TotalSeconds) < 2,
+            $"Expected LastWriteTimeUtc near {historicLastWrite:O} but got {actualDstLastWrite:O}");
+    }
+
+    [Fact]
     public async Task CopyMissingFilesAsync_MultiDestinationFanOut_CopiesToAllDestinationsInSinglePass()
     {
         string srcDir = Path.Combine(_testDir, "src_card");
