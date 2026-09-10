@@ -236,6 +236,65 @@ public sealed class SqliteIndexCacheTests : IAsyncDisposable
         }
     }
 
+    [Fact]
+    public async Task GetAsync_TimestampWithinTolerance_ReturnsCacheHit()
+    {
+        DateTime baseTime = new(2026, 6, 15, 12, 0, 0, DateTimeKind.Utc);
+        MediaFile file = new(
+            RelativePath: "DCIM/IMG_9999.JPG",
+            FullPath: "/media/card/DCIM/IMG_9999.JPG",
+            FileLength: 5_000_000,
+            LastWriteTimeUtc: baseTime,
+            Category: MediaCategory.PhotoStandard,
+            HeadHash: 111111UL,
+            TailHash: 222222UL,
+            DeepHash: 333333UL,
+            FullHash: 444444UL);
+
+        await _cache.UpsertBatchAsync(new[] { file });
+
+        // Sub-second filesystem resolution differences (e.g. exFAT 10ms vs ext4 1ns)
+        MediaFile? hit500ms = await _cache.GetAsync(file.FullPath, file.FileLength, baseTime.AddMilliseconds(500));
+        Assert.NotNull(hit500ms);
+        Assert.Equal(file.HeadHash, hit500ms.HeadHash);
+
+        // FAT32 2-second timestamp resolution difference
+        MediaFile? hit1800ms = await _cache.GetAsync(file.FullPath, file.FileLength, baseTime.AddSeconds(1.8));
+        Assert.NotNull(hit1800ms);
+        Assert.Equal(file.HeadHash, hit1800ms.HeadHash);
+
+        // Modified file (outside 2.0s tolerance window)
+        MediaFile? miss3s = await _cache.GetAsync(file.FullPath, file.FileLength, baseTime.AddSeconds(3.5));
+        Assert.Null(miss3s);
+    }
+
+    [Fact]
+    public async Task GetBatchAsync_TimestampWithinTolerance_ReturnsCacheHit()
+    {
+        DateTime baseTime = new(2026, 6, 15, 12, 0, 0, DateTimeKind.Utc);
+        MediaFile file = new(
+            RelativePath: "DCIM/IMG_8888.JPG",
+            FullPath: "/media/card/DCIM/IMG_8888.JPG",
+            FileLength: 2_500_000,
+            LastWriteTimeUtc: baseTime,
+            Category: MediaCategory.PhotoStandard,
+            HeadHash: 555555UL,
+            TailHash: 666666UL,
+            DeepHash: 777777UL,
+            FullHash: 888888UL);
+
+        await _cache.UpsertBatchAsync(new[] { file });
+
+        MediaFile queryWithinTolerance = file with { LastWriteTimeUtc = baseTime.AddSeconds(1.2) };
+        IReadOnlyDictionary<string, MediaFile> hitBatch = await _cache.GetBatchAsync(new[] { queryWithinTolerance });
+        Assert.Single(hitBatch);
+        Assert.Equal(file.HeadHash, hitBatch[file.FullPath].HeadHash);
+
+        MediaFile queryOutsideTolerance = file with { LastWriteTimeUtc = baseTime.AddSeconds(4.0) };
+        IReadOnlyDictionary<string, MediaFile> missBatch = await _cache.GetBatchAsync(new[] { queryOutsideTolerance });
+        Assert.Empty(missBatch);
+    }
+
     public async ValueTask DisposeAsync()
     {
         await _cache.DisposeAsync();

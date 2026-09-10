@@ -17,6 +17,7 @@ public sealed class SqliteIndexCache : IIndexCache
 {
     private readonly string _connectionString;
     private readonly SemaphoreSlim _semaphore = new(1, 1);
+    private const double TIMESTAMP_TOLERANCE_SECONDS = 2.0;
     private bool _initialized;
 
     public SqliteIndexCache(string? dbPath = null)
@@ -112,34 +113,38 @@ public sealed class SqliteIndexCache : IIndexCache
 
         await using SqliteCommand command = connection.CreateCommand();
         command.CommandText = @"
-            SELECT RelativePath, Category, HeadHash, TailHash, DeepHash, FullHash
+            SELECT RelativePath, Category, HeadHash, TailHash, DeepHash, FullHash, LastWriteTimeUtc
             FROM MediaCache
-            WHERE FilePath = @path AND FileLength = @length AND LastWriteTimeUtc = @lastWrite;";
+            WHERE FilePath = @path AND FileLength = @length;";
 
         command.Parameters.AddWithValue("@path", filePath);
         command.Parameters.AddWithValue("@length", fileLength);
-        command.Parameters.AddWithValue("@lastWrite", lastWriteTimeUtc.Ticks);
 
         await using SqliteDataReader reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        if (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
-            string relativePath = reader.GetString(0);
-            MediaCategory category = (MediaCategory)reader.GetInt32(1);
-            ulong? headHash = reader.IsDBNull(2) ? null : (ulong)reader.GetInt64(2);
-            ulong? tailHash = reader.IsDBNull(3) ? null : (ulong)reader.GetInt64(3);
-            ulong? deepHash = reader.IsDBNull(4) ? null : (ulong)reader.GetInt64(4);
-            ulong? fullHash = reader.IsDBNull(5) ? null : (ulong)reader.GetInt64(5);
+            long cachedTicks = reader.GetInt64(6);
+            TimeSpan delta = lastWriteTimeUtc - new DateTime(cachedTicks, DateTimeKind.Utc);
+            if (Math.Abs(delta.TotalSeconds) <= TIMESTAMP_TOLERANCE_SECONDS)
+            {
+                string relativePath = reader.GetString(0);
+                MediaCategory category = (MediaCategory)reader.GetInt32(1);
+                ulong? headHash = reader.IsDBNull(2) ? null : (ulong)reader.GetInt64(2);
+                ulong? tailHash = reader.IsDBNull(3) ? null : (ulong)reader.GetInt64(3);
+                ulong? deepHash = reader.IsDBNull(4) ? null : (ulong)reader.GetInt64(4);
+                ulong? fullHash = reader.IsDBNull(5) ? null : (ulong)reader.GetInt64(5);
 
-            return new MediaFile(
-                RelativePath: relativePath,
-                FullPath: filePath,
-                FileLength: fileLength,
-                LastWriteTimeUtc: lastWriteTimeUtc,
-                Category: category,
-                HeadHash: headHash,
-                TailHash: tailHash,
-                DeepHash: deepHash,
-                FullHash: fullHash);
+                return new MediaFile(
+                    RelativePath: relativePath,
+                    FullPath: filePath,
+                    FileLength: fileLength,
+                    LastWriteTimeUtc: lastWriteTimeUtc,
+                    Category: category,
+                    HeadHash: headHash,
+                    TailHash: tailHash,
+                    DeepHash: deepHash,
+                    FullHash: fullHash);
+            }
         }
 
         return null;
@@ -198,7 +203,8 @@ public sealed class SqliteIndexCache : IIndexCache
                     long length = reader.GetInt64(2);
                     long lastWriteTicks = reader.GetInt64(3);
 
-                    if (candidate.FileLength == length && candidate.LastWriteTimeUtc.Ticks == lastWriteTicks)
+                    TimeSpan delta = candidate.LastWriteTimeUtc - new DateTime(lastWriteTicks, DateTimeKind.Utc);
+                    if (candidate.FileLength == length && Math.Abs(delta.TotalSeconds) <= TIMESTAMP_TOLERANCE_SECONDS)
                     {
                         string relativePath = reader.GetString(1);
                         MediaCategory category = (MediaCategory)reader.GetInt32(4);
