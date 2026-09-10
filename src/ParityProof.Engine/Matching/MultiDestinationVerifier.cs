@@ -681,9 +681,7 @@ public sealed class MultiDestinationVerifier : IVerificationEngine
         }
         else if (corruptCount > 0 || missingCount > 0)
         {
-            overallStatus = (fullyVerifiedCount > 0 || partiallyVerifiedCount > 0)
-                ? OverallSafetyStatus.PartiallyBackedUp
-                : OverallSafetyStatus.UnsafeToFormat;
+            overallStatus = OverallSafetyStatus.UnsafeToFormat;
         }
         else if (partiallyVerifiedCount > 0)
         {

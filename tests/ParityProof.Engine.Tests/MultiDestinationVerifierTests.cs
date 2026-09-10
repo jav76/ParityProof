@@ -466,6 +466,47 @@ public sealed class MultiDestinationVerifierTests : IDisposable
         Assert.NotEqual(secondId, thirdId);
     }
 
+    [Fact]
+    public async Task VerifyAsync_PartiallyMissingFiles_ReturnsUnsafeToFormat_NeverPartiallyBackedUp()
+    {
+        string cardDir = Path.Combine(_testDir, "card_partial_missing");
+        string ssdDir = Path.Combine(_testDir, "ssd_partial_missing");
+        Directory.CreateDirectory(cardDir);
+        Directory.CreateDirectory(ssdDir);
+
+        byte[] img1 = new byte[512];
+        byte[] img2 = new byte[512];
+        byte[] img3 = new byte[512];
+        Random.Shared.NextBytes(img1);
+        Random.Shared.NextBytes(img2);
+        Random.Shared.NextBytes(img3);
+
+        File.WriteAllBytes(Path.Combine(cardDir, "IMG_0001.CR3"), img1);
+        File.WriteAllBytes(Path.Combine(cardDir, "IMG_0002.CR3"), img2);
+        File.WriteAllBytes(Path.Combine(cardDir, "IMG_0003.CR3"), img3);
+
+        // SSD only has IMG_0001.CR3. IMG_0002 and IMG_0003 are missing across all destinations.
+        File.WriteAllBytes(Path.Combine(ssdDir, "IMG_0001.CR3"), img1);
+
+        List<BackupDestination> destinations = new()
+        {
+            new BackupDestination("ssd", "Primary SSD", ssdDir)
+        };
+
+        (VerificationSummary summary, IReadOnlyList<VerificationResultItem> results) = await _verifier.VerifyAsync(
+            cardDir,
+            destinations,
+            VerificationMode.Quick,
+            FilterPreset.PhotosOnly);
+
+        Assert.Equal(3, summary.TotalFiles);
+        Assert.Equal(1, summary.FullyVerifiedFiles);
+        Assert.Equal(0, summary.PartiallyVerifiedFiles);
+        Assert.Equal(2, summary.MissingFiles);
+        // Even though 1 file is verified, missing files mean formatting is unsafe
+        Assert.Equal(OverallSafetyStatus.UnsafeToFormat, summary.SafetyStatus);
+    }
+
     public void Dispose()
     {
         try

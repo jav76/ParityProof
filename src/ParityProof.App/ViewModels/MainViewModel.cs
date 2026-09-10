@@ -1035,12 +1035,18 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
             DurationFormatted = $"{summary.Duration.TotalSeconds:F1}s";
             DisplayedScanMode = FormatScanMode(summary.Mode);
 
+            int verifiedWithAtLeastOneCopy = summary.FullyVerifiedFiles + summary.PartiallyVerifiedFiles;
+            double backupPercentage = summary.TotalFiles > 0
+                ? (double)verifiedWithAtLeastOneCopy / summary.TotalFiles * 100.0
+                : 0.0;
+            int unprotectedCount = summary.MissingFiles + summary.CorruptFiles;
+
             SafetyBadgeText = summary.SafetyStatus switch
             {
                 OverallSafetyStatus.SafeToFormat => "SAFE TO FORMAT - 100% BACKED UP",
-                OverallSafetyStatus.PartiallyBackedUp => "PARTIALLY BACKED UP - ACTION REQUIRED",
+                OverallSafetyStatus.PartiallyBackedUp => $"PARTIALLY BACKED UP - 100% SINGLE COPY ({(summary.PartiallyVerifiedFiles == 1 ? "1 NEEDS" : $"{summary.PartiallyVerifiedFiles} NEED")} REDUNDANCY)",
                 OverallSafetyStatus.NoMediaFound => "NO MEDIA DETECTED - DO NOT FORMAT",
-                _ => "UNSAFE TO FORMAT - MISSING FILES"
+                _ => $"UNSAFE TO FORMAT - {backupPercentage:F0}% BACKED UP ({unprotectedCount} UNPROTECTED)"
             };
 
             SafetyBadgeColor = summary.SafetyStatus switch
