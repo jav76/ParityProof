@@ -25,7 +25,7 @@ public static class ChunkReader
         {
             int headBytesToRead = (int)Math.Min((long)chunkSize, fileLength);
             Span<byte> headSpan = rented.AsSpan(0, headBytesToRead);
-            int headRead = RandomAccess.Read(handle, headSpan, fileOffset: 0);
+            int headRead = ReadExact(handle, headSpan, fileOffset: 0);
             ulong headHash = SimdHasher.Hash64(headSpan.Slice(0, headRead));
 
             if (fileLength <= chunkSize)
@@ -36,7 +36,7 @@ public static class ChunkReader
             int tailBytesToRead = (int)Math.Min((long)chunkSize, fileLength);
             Span<byte> tailSpan = rented.AsSpan(0, tailBytesToRead);
             long tailOffset = fileLength - tailBytesToRead;
-            int tailRead = RandomAccess.Read(handle, tailSpan, fileOffset: tailOffset);
+            int tailRead = ReadExact(handle, tailSpan, fileOffset: tailOffset);
             ulong tailHash = SimdHasher.Hash64(tailSpan.Slice(0, tailRead));
 
             return (headHash, tailHash);
@@ -45,6 +45,23 @@ public static class ChunkReader
         {
             ArrayPool<byte>.Shared.Return(rented);
         }
+    }
+
+    private static int ReadExact(SafeFileHandle handle, Span<byte> destination, long fileOffset)
+    {
+        int totalRead = 0;
+        while (totalRead < destination.Length)
+        {
+            int bytesRead = RandomAccess.Read(handle, destination.Slice(totalRead), fileOffset + totalRead);
+            if (bytesRead <= 0)
+            {
+                break;
+            }
+
+            totalRead += bytesRead;
+        }
+
+        return totalRead;
     }
 
     public static (ulong HeadHash, ulong TailHash) ComputeHeadTailHash(

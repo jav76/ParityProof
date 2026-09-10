@@ -125,4 +125,22 @@ public sealed class DeepProbeHasherTests : IDisposable
         ulong corruptDeepHash = DeepProbeHasher.ComputeDeepHash(corruptPath);
         Assert.NotEqual(origDeepHash, corruptDeepHash);
     }
+
+    [Fact]
+    public void ComputeDeepHash_ProducesDeterministicHash_AcrossMultipleInvocations()
+    {
+        string filePath = Path.Combine(_testDir, "deterministic_test.raw");
+        const int FILE_LEN = 12 * 1024 * 1024; // 12 MB
+        byte[] data = new byte[FILE_LEN];
+        Random.Shared.NextBytes(data);
+        File.WriteAllBytes(filePath, data);
+
+        ulong hash1 = DeepProbeHasher.ComputeDeepHash(filePath);
+        ulong hash2 = DeepProbeHasher.ComputeDeepHash(filePath);
+        ulong hash3 = DeepProbeHasher.ComputeDeepHash(filePath);
+
+        Assert.Equal(hash1, hash2);
+        Assert.Equal(hash2, hash3);
+        Assert.NotEqual(0UL, hash1);
+    }
 }

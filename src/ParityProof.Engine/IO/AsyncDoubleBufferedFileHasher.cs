@@ -59,7 +59,7 @@ public static class AsyncDoubleBufferedFileHasher
 
             // Kick off first asynchronous read
             int bytesToRead = (int)Math.Min(DEFAULT_BUFFER_SIZE, fileLength - fileOffset);
-            int currentBytesRead = await RandomAccess.ReadAsync(
+            int currentBytesRead = await ReadExactAsync(
                 handle,
                 currentBuffer.AsMemory(0, bytesToRead),
                 fileOffset,
@@ -94,7 +94,7 @@ public static class AsyncDoubleBufferedFileHasher
                 if (hasMore)
                 {
                     int nextBytesToRead = (int)Math.Min(DEFAULT_BUFFER_SIZE, fileLength - fileOffset);
-                    nextReadTask = RandomAccess.ReadAsync(
+                    nextReadTask = ReadExactAsync(
                         handle,
                         nextBuffer.AsMemory(0, nextBytesToRead),
                         fileOffset,
@@ -128,5 +128,31 @@ public static class AsyncDoubleBufferedFileHasher
             ArrayPool<byte>.Shared.Return(bufferA);
             ArrayPool<byte>.Shared.Return(bufferB);
         }
+    }
+
+    private static async ValueTask<int> ReadExactAsync(
+        SafeFileHandle handle,
+        Memory<byte> buffer,
+        long fileOffset,
+        CancellationToken cancellationToken)
+    {
+        int totalRead = 0;
+        while (totalRead < buffer.Length)
+        {
+            int read = await RandomAccess.ReadAsync(
+                handle,
+                buffer.Slice(totalRead),
+                fileOffset + totalRead,
+                cancellationToken).ConfigureAwait(false);
+
+            if (read <= 0)
+            {
+                break;
+            }
+
+            totalRead += read;
+        }
+
+        return totalRead;
     }
 }

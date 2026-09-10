@@ -50,7 +50,7 @@ public static class DeepProbeHasher
                     cancellationToken.ThrowIfCancellationRequested();
                     int bytesToRead = (int)Math.Min((long)BUFFER_SIZE, fileLength - fileOffset);
                     Span<byte> bufferSpan = rentedBuffer.AsSpan(0, bytesToRead);
-                    int bytesRead = RandomAccess.Read(handle, bufferSpan, fileOffset);
+                    int bytesRead = ReadExact(handle, bufferSpan, fileOffset);
                     if (bytesRead <= 0)
                     {
                         break;
@@ -71,7 +71,7 @@ public static class DeepProbeHasher
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 Span<byte> bufferSpan = rentedBuffer.AsSpan(0, length);
-                int bytesRead = RandomAccess.Read(handle, bufferSpan, offset);
+                int bytesRead = ReadExact(handle, bufferSpan, offset);
                 if (bytesRead > 0)
                 {
                     onBytesRead?.Invoke(bytesRead);
@@ -85,6 +85,23 @@ public static class DeepProbeHasher
         {
             ArrayPool<byte>.Shared.Return(rentedBuffer);
         }
+    }
+
+    private static int ReadExact(SafeFileHandle handle, Span<byte> destination, long fileOffset)
+    {
+        int totalRead = 0;
+        while (totalRead < destination.Length)
+        {
+            int bytesRead = RandomAccess.Read(handle, destination.Slice(totalRead), fileOffset + totalRead);
+            if (bytesRead <= 0)
+            {
+                break;
+            }
+
+            totalRead += bytesRead;
+        }
+
+        return totalRead;
     }
 
     public static List<(long Offset, int Length)> GenerateProbePlan(long fileLength)
