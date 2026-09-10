@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Input.Platform;
 using Avalonia.Media.Imaging;
+using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -1560,6 +1561,22 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         }
     }
 
+    [ObservableProperty]
+    private string? _lastExportedReportPath;
+
+    public bool HasExportedReport => !string.IsNullOrEmpty(LastExportedReportPath);
+
+    partial void OnLastExportedReportPathChanged(string? value) => OnPropertyChanged(nameof(HasExportedReport));
+
+    [RelayCommand]
+    private void OpenLastReport()
+    {
+        if (!string.IsNullOrEmpty(LastExportedReportPath) && File.Exists(LastExportedReportPath))
+        {
+            FileOpener.OpenFile(LastExportedReportPath);
+        }
+    }
+
     [RelayCommand]
     private async Task ExportReportAsync(string format)
     {
@@ -1576,11 +1593,46 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
             _ => new HtmlReportGenerator()
         };
 
-        string docsDir = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-        string fileName = $"ParityProof_Report_{DateTime.UtcNow:yyyyMMdd_HHmmss}{generator.FileExtension}";
-        string outputPath = Path.Combine(docsDir, fileName);
+        string? outputPath = null;
+        if (Avalonia.Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop &&
+            desktop.MainWindow?.StorageProvider is { } storageProvider)
+        {
+            FilePickerSaveOptions options = new()
+            {
+                Title = $"Save {generator.DisplayName}",
+                DefaultExtension = generator.FileExtension.TrimStart('.'),
+                SuggestedFileName = $"ParityProof_Audit_{DateTime.UtcNow:yyyyMMdd_HHmm}",
+                FileTypeChoices = new List<FilePickerFileType>
+                {
+                    new(generator.DisplayName)
+                    {
+                        Patterns = new List<string> { $"*{generator.FileExtension}" }
+                    }
+                }
+            };
+
+            IStorageFile? targetFile = await storageProvider.SaveFilePickerAsync(options);
+            if (targetFile is null)
+            {
+                return;
+            }
+
+            outputPath = targetFile.Path.LocalPath;
+        }
+
+        if (string.IsNullOrEmpty(outputPath))
+        {
+            string docsDir = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+            if (string.IsNullOrWhiteSpace(docsDir) || !Directory.Exists(docsDir))
+            {
+                docsDir = Path.GetTempPath();
+            }
+            string fileName = $"ParityProof_Audit_{DateTime.UtcNow:yyyyMMdd_HHmm}{generator.FileExtension}";
+            outputPath = Path.Combine(docsDir, fileName);
+        }
 
         await generator.GenerateReportAsync(_lastSummary, _lastResults, outputPath);
+        LastExportedReportPath = outputPath;
         StatusMessage = $"Audit report exported to: {outputPath}";
     }
 

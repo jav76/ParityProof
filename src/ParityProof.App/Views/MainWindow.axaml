@@ -39,6 +39,9 @@
                         Background="#1E293B" Foreground="#E2E8F0" BorderBrush="#334155" Padding="12,6"/>
                 <Button Content="Export JSON" Command="{Binding ExportReportCommand}" CommandParameter="json"
                         Background="#1E293B" Foreground="#E2E8F0" BorderBrush="#334155" Padding="12,6"/>
+                <Button Content="📂 Open Report" Command="{Binding OpenLastReportCommand}"
+                        IsVisible="{Binding HasExportedReport}"
+                        Background="#0F766E" Foreground="#F0FDFA" BorderBrush="#14B8A6" Padding="12,6"/>
             </StackPanel>
         </Grid>
 
