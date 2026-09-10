@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\ParityProof.Core\ParityProof.Core.csproj" />
+    <InternalsVisibleTo Include="ParityProof.Engine.Tests" />
   </ItemGroup>
 
   <PropertyGroup>

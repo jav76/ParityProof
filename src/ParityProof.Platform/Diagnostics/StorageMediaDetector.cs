@@ -114,6 +114,11 @@ public static class StorageMediaDetector
                 string baseDev = GetLinuxBaseDevice(fullPath);
                 if (!string.IsNullOrEmpty(baseDev))
                 {
+                    if (baseDev.StartsWith("mmcblk", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return true;
+                    }
+
                     string removablePath = Path.Combine("/sys/block", baseDev, "removable");
                     if (File.Exists(removablePath))
                     {
@@ -174,31 +179,7 @@ public static class StorageMediaDetector
         }
 
         string rawDev = Path.GetFileName(matchedDevice);
-        string baseDev = rawDev;
-
-        if (rawDev.StartsWith("nvme", StringComparison.OrdinalIgnoreCase))
-        {
-            int pIndex = rawDev.IndexOf('p', StringComparison.OrdinalIgnoreCase);
-            if (pIndex > 0)
-            {
-                baseDev = rawDev[..pIndex];
-            }
-        }
-        else
-        {
-            int digitIndex = 0;
-            while (digitIndex < rawDev.Length && !char.IsAsciiDigit(rawDev[digitIndex]))
-            {
-                digitIndex++;
-            }
-
-            if (digitIndex > 0 && digitIndex < rawDev.Length)
-            {
-                baseDev = rawDev[..digitIndex];
-            }
-        }
-
-        return baseDev;
+        return NormalizeLinuxBaseDevice(rawDev);
     }
 
     private static StorageMediaType DetectLinux(string fullPath)
@@ -237,29 +218,7 @@ public static class StorageMediaDetector
         if (!string.IsNullOrEmpty(matchedDevice) && matchedDevice.StartsWith("/dev/", StringComparison.Ordinal))
         {
             string rawDev = Path.GetFileName(matchedDevice);
-            string baseDev = rawDev;
-
-            if (rawDev.StartsWith("nvme", StringComparison.OrdinalIgnoreCase))
-            {
-                int pIndex = rawDev.IndexOf('p', StringComparison.OrdinalIgnoreCase);
-                if (pIndex > 0)
-                {
-                    baseDev = rawDev[..pIndex];
-                }
-            }
-            else
-            {
-                int digitIndex = 0;
-                while (digitIndex < rawDev.Length && !char.IsAsciiDigit(rawDev[digitIndex]))
-                {
-                    digitIndex++;
-                }
-
-                if (digitIndex > 0 && digitIndex < rawDev.Length)
-                {
-                    baseDev = rawDev[..digitIndex];
-                }
-            }
+            string baseDev = NormalizeLinuxBaseDevice(rawDev);
 
             string rotationalPath = Path.Combine("/sys/block", baseDev, "queue/rotational");
             if (File.Exists(rotationalPath))
@@ -278,6 +237,36 @@ public static class StorageMediaDetector
         }
 
         return StorageMediaType.SolidState;
+    }
+
+    internal static string NormalizeLinuxBaseDevice(string rawDev)
+    {
+        string baseDev = rawDev;
+
+        if (rawDev.StartsWith("nvme", StringComparison.OrdinalIgnoreCase) ||
+            rawDev.StartsWith("mmcblk", StringComparison.OrdinalIgnoreCase))
+        {
+            int pIndex = rawDev.IndexOf('p', StringComparison.OrdinalIgnoreCase);
+            if (pIndex > 0)
+            {
+                baseDev = rawDev[..pIndex];
+            }
+        }
+        else
+        {
+            int digitIndex = 0;
+            while (digitIndex < rawDev.Length && !char.IsAsciiDigit(rawDev[digitIndex]))
+            {
+                digitIndex++;
+            }
+
+            if (digitIndex > 0 && digitIndex < rawDev.Length)
+            {
+                baseDev = rawDev[..digitIndex];
+            }
+        }
+
+        return baseDev;
     }
 
     private static StorageMediaType DetectWindows(string fullPath)
