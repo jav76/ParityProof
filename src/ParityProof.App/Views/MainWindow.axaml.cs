@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
@@ -16,10 +17,66 @@ public partial class MainWindow : Window
     private bool _isDraggingInspector;
     private Point _dragStartPoint;
     private double _dragStartWidth;
+    private bool _closeRequested;
+    private MainViewModel? _viewModel;
 
     public MainWindow()
     {
         InitializeComponent();
+    }
+
+    protected override void OnDataContextChanged(EventArgs e)
+    {
+        base.OnDataContextChanged(e);
+
+        if (_viewModel is not null)
+        {
+            _viewModel.PropertyChanged -= OnViewModelPropertyChanged;
+        }
+
+        _viewModel = DataContext as MainViewModel;
+
+        if (_viewModel is not null)
+        {
+            _viewModel.PropertyChanged += OnViewModelPropertyChanged;
+        }
+    }
+
+    protected override void OnClosing(WindowClosingEventArgs e)
+    {
+        if (DataContext is MainViewModel vm && vm.IsOperationActive)
+        {
+            e.Cancel = true;
+            _closeRequested = true;
+            vm.RequestCancelCommand.Execute(null);
+            return;
+        }
+
+        base.OnClosing(e);
+    }
+
+    private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (sender is not MainViewModel vm)
+        {
+            return;
+        }
+
+        if (e.PropertyName == nameof(MainViewModel.IsOperationActive))
+        {
+            if (!vm.IsOperationActive && _closeRequested)
+            {
+                _closeRequested = false;
+                Close();
+            }
+        }
+        else if (e.PropertyName == nameof(MainViewModel.ShowCancelConfirmation))
+        {
+            if (!vm.ShowCancelConfirmation && vm.IsOperationActive && _closeRequested)
+            {
+                _closeRequested = false;
+            }
+        }
     }
 
     private async void OnBrowseSourceClicked(object? sender, RoutedEventArgs e)
