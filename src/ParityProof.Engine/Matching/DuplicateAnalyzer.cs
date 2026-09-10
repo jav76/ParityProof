@@ -554,7 +554,8 @@ public sealed class DuplicateAnalyzer : IDuplicateAnalyzer
             foreach (KeyValuePair<string, List<DestinationFileEntry>> destKvp in byDestination)
             {
                 List<DestinationFileEntry> destList = destKvp.Value;
-                if (destList.Count > 1)
+                bool isDestIntra = destList.Count > 1;
+                if (isDestIntra)
                 {
                     isIntraDestination = true;
                     int redundantCountInDest = destList.Count - 1;
@@ -571,7 +572,8 @@ public sealed class DuplicateAnalyzer : IDuplicateAnalyzer
                         DestinationId: entry.DestinationId,
                         DestinationName: entry.DestinationName,
                         IsPrimary: isPrimary,
-                        RelativePath: entry.File.RelativePath));
+                        RelativePath: entry.File.RelativePath,
+                        IsSameDestinationDuplicate: isDestIntra));
                 }
             }
 

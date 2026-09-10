@@ -801,9 +801,19 @@
                         <!-- Grouped Duplicate Items List -->
                         <ScrollViewer Grid.Row="1">
                             <StackPanel Spacing="10">
+                                <!-- Filter Pills -->
+                                <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,0,4">
+                                    <Button Content="All Groups" Command="{Binding SetDuplicateFilterModeCommand}" CommandParameter="All"
+                                            Background="#1E293B" Foreground="#F8FAFC" BorderBrush="#334155" Padding="10,5" FontSize="11"/>
+                                    <Button Content="Same-Drive Waste Only" Command="{Binding SetDuplicateFilterModeCommand}" CommandParameter="DuplicatesOnly"
+                                            Background="#1E293B" Foreground="#FBBF24" BorderBrush="#334155" Padding="10,5" FontSize="11"/>
+                                    <Button Content="Multi-Drive Redundancy Only" Command="{Binding SetDuplicateFilterModeCommand}" CommandParameter="RedundancyOnly"
+                                            Background="#1E293B" Foreground="#38BDF8" BorderBrush="#334155" Padding="10,5" FontSize="11"/>
+                                </StackPanel>
+
                                 <!-- Empty state when no duplicates -->
                                 <Border Background="#111827" BorderBrush="#1F2937" BorderThickness="1" CornerRadius="8" Padding="24"
-                                        IsVisible="{Binding !HasDuplicates}" HorizontalAlignment="Stretch">
+                                        IsVisible="{Binding !HasDuplicateGroups}" HorizontalAlignment="Stretch">
                                     <StackPanel Spacing="8" HorizontalAlignment="Center">
                                         <TextBlock Text="✓ No duplicate files detected" FontSize="16" FontWeight="Bold" Foreground="#10B981" HorizontalAlignment="Center"/>
                                         <TextBlock Text="All verified destination files have unique content with zero redundant copies." FontSize="12" Foreground="#94A3B8" HorizontalAlignment="Center"/>

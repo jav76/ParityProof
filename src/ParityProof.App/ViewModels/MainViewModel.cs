@@ -225,6 +225,23 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     private bool _hasDuplicates;
 
     [ObservableProperty]
+    private bool _hasDuplicateGroups;
+
+    [ObservableProperty]
+    private string _duplicateFilterMode = "All";
+
+    partial void OnDuplicateFilterModeChanged(string value)
+    {
+        ApplyFilter();
+    }
+
+    [RelayCommand]
+    public void SetDuplicateFilterMode(string mode)
+    {
+        DuplicateFilterMode = mode;
+    }
+
+    [ObservableProperty]
     private string _copyProgressText = string.Empty;
 
     [ObservableProperty]
@@ -565,6 +582,18 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
 
         foreach (DuplicateGroupViewModel group in AllDuplicateGroups)
         {
+            bool matchesMode = DuplicateFilterMode switch
+            {
+                "DuplicatesOnly" => group.IsIntraDestination,
+                "RedundancyOnly" => !group.IsIntraDestination,
+                _ => true
+            };
+
+            if (!matchesMode)
+            {
+                continue;
+            }
+
             if (string.IsNullOrEmpty(filter) ||
                 group.FileName.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
                 group.Files.Any(f => f.RelativePath.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
@@ -971,7 +1000,8 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
                 DuplicateFilesCount = summary.DuplicateAnalysis.TotalDuplicateCopies;
                 ReclaimableSpaceFormatted = FormatBytes(summary.DuplicateAnalysis.TotalReclaimableBytes);
                 CrossDestinationRedundantCount = summary.DuplicateAnalysis.CrossDestinationRedundantFileCount;
-                HasDuplicates = summary.DuplicateAnalysis.Groups.Count > 0;
+                HasDuplicates = summary.DuplicateAnalysis.TotalDuplicateCopies > 0;
+                HasDuplicateGroups = summary.DuplicateAnalysis.Groups.Count > 0;
 
                 foreach (DuplicateGroup group in summary.DuplicateAnalysis.Groups)
                 {
@@ -984,6 +1014,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
                 ReclaimableSpaceFormatted = "0 B";
                 CrossDestinationRedundantCount = 0;
                 HasDuplicates = false;
+                HasDuplicateGroups = false;
             }
 
             HasResults = true;
@@ -1231,7 +1262,8 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
             DuplicateFilesCount = result.TotalDuplicateCopies;
             ReclaimableSpaceFormatted = FormatBytes(result.TotalReclaimableBytes);
             CrossDestinationRedundantCount = result.CrossDestinationRedundantFileCount;
-            HasDuplicates = result.Groups.Count > 0;
+            HasDuplicates = result.TotalDuplicateCopies > 0;
+            HasDuplicateGroups = result.Groups.Count > 0;
             DisplayedScanMode = FormatScanMode(SelectedMode);
 
             AllDuplicateGroups.Clear();

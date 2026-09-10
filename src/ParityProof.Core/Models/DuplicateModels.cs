@@ -8,7 +8,11 @@ public sealed record DuplicateFileItem(
     string DestinationId,
     string DestinationName,
     bool IsPrimary,
-    string RelativePath);
+    string RelativePath,
+    bool IsSameDestinationDuplicate = false)
+{
+    public bool IsSameDestinationDuplicate { get; init; } = IsSameDestinationDuplicate || !IsPrimary;
+}
 
 public sealed record DuplicateGroup(
     string GroupKey,

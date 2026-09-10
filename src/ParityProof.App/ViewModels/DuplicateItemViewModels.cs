@@ -23,9 +23,19 @@ public sealed partial class DuplicateFileItemViewModel : ViewModelBase
     public string RelativePath => Item.RelativePath;
     public string FullPath => Item.File.FullPath;
 
-    public string StatusBadgeText => Item.IsPrimary ? "PRIMARY" : "DUPLICATE";
-    public string StatusBadgeBackground => Item.IsPrimary ? "#064E3B" : "#78350F";
-    public string StatusBadgeForeground => Item.IsPrimary ? "#10B981" : "#FBBF24";
+    public bool IsSameDestinationDuplicate => Item.IsSameDestinationDuplicate;
+
+    public string StatusBadgeText => !IsSameDestinationDuplicate
+        ? "BACKUP COPY"
+        : (Item.IsPrimary ? "PRIMARY" : "DUPLICATE");
+
+    public string StatusBadgeBackground => !IsSameDestinationDuplicate
+        ? "#0C4A6E"
+        : (Item.IsPrimary ? "#064E3B" : "#78350F");
+
+    public string StatusBadgeForeground => !IsSameDestinationDuplicate
+        ? "#38BDF8"
+        : (Item.IsPrimary ? "#10B981" : "#FBBF24");
 
     public DuplicateFileItemViewModel(DuplicateFileItem item)
     {

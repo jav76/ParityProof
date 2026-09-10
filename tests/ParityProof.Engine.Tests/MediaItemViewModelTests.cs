@@ -267,4 +267,64 @@ public sealed class MediaItemViewModelTests
         Assert.Equal("truenas_primary", vm.DestinationName);
         Assert.Equal("DUPLICATE", vm.StatusBadgeText);
     }
+
+    [Fact]
+    public void DuplicateFileItemViewModel_RendersBackupCopy_WhenNotSameDestinationDuplicate()
+    {
+        MediaFile mediaFile = new(
+            RelativePath: "DCIM/PHOTO_01.CR3",
+            FullPath: "/mnt/backup1/DCIM/PHOTO_01.CR3",
+            FileLength: 20 * 1024 * 1024,
+            LastWriteTimeUtc: DateTime.UtcNow,
+            Category: MediaCategory.PhotoRaw);
+
+        DuplicateFileItem item = new(
+            File: mediaFile,
+            DestinationId: "backup1",
+            DestinationName: "Backup Drive 1",
+            IsPrimary: true,
+            RelativePath: "DCIM/PHOTO_01.CR3",
+            IsSameDestinationDuplicate: false);
+
+        DuplicateFileItemViewModel vm = new(item);
+
+        Assert.Equal("BACKUP COPY", vm.StatusBadgeText);
+        Assert.Equal("#0C4A6E", vm.StatusBadgeBackground);
+        Assert.Equal("#38BDF8", vm.StatusBadgeForeground);
+    }
+
+    [Fact]
+    public void DuplicateFileItemViewModel_RendersPrimaryAndDuplicate_WhenSameDestinationDuplicate()
+    {
+        MediaFile mediaFile = new(
+            RelativePath: "DCIM/PHOTO_01.CR3",
+            FullPath: "/mnt/backup1/DCIM/PHOTO_01.CR3",
+            FileLength: 20 * 1024 * 1024,
+            LastWriteTimeUtc: DateTime.UtcNow,
+            Category: MediaCategory.PhotoRaw);
+
+        DuplicateFileItem primaryItem = new(
+            File: mediaFile,
+            DestinationId: "backup1",
+            DestinationName: "Backup Drive 1",
+            IsPrimary: true,
+            RelativePath: "DCIM/PHOTO_01.CR3",
+            IsSameDestinationDuplicate: true);
+
+        DuplicateFileItemViewModel primaryVm = new(primaryItem);
+        Assert.Equal("PRIMARY", primaryVm.StatusBadgeText);
+        Assert.Equal("#064E3B", primaryVm.StatusBadgeBackground);
+
+        DuplicateFileItem duplicateItem = new(
+            File: mediaFile,
+            DestinationId: "backup1",
+            DestinationName: "Backup Drive 1",
+            IsPrimary: false,
+            RelativePath: "DCIM/COPIES/PHOTO_01.CR3",
+            IsSameDestinationDuplicate: true);
+
+        DuplicateFileItemViewModel duplicateVm = new(duplicateItem);
+        Assert.Equal("DUPLICATE", duplicateVm.StatusBadgeText);
+        Assert.Equal("#78350F", duplicateVm.StatusBadgeBackground);
+    }
 }
