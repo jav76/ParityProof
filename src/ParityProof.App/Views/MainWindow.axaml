@@ -789,7 +789,7 @@
                 </Grid>
 
                     <!-- Duplicates Explorer View (Visible on Duplicates Tab) -->
-                    <Grid Grid.Row="1" RowDefinitions="Auto,*" IsVisible="{Binding IsDuplicatesTabActive}">
+                    <Grid Grid.Row="1" RowDefinitions="Auto,Auto,*" IsVisible="{Binding IsDuplicatesTabActive}">
                         <!-- Duplicates Summary Header Strip -->
                         <Border Grid.Row="0" Background="#1E293B" BorderBrush="#334155" BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,10">
                             <Grid ColumnDefinitions="*,*,*,*">
@@ -812,87 +812,101 @@
                             </Grid>
                         </Border>
 
-                        <!-- Grouped Duplicate Items List -->
-                        <ScrollViewer Grid.Row="1">
-                            <StackPanel Spacing="10">
-                                <!-- Filter Pills -->
-                                <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,0,4">
-                                    <Button Content="All Groups" Command="{Binding SetDuplicateFilterModeCommand}" CommandParameter="All"
-                                            Background="#1E293B" Foreground="#F8FAFC" BorderBrush="#334155" Padding="10,5" FontSize="11"/>
-                                    <Button Content="Same-Drive Waste Only" Command="{Binding SetDuplicateFilterModeCommand}" CommandParameter="DuplicatesOnly"
-                                            Background="#1E293B" Foreground="#FBBF24" BorderBrush="#334155" Padding="10,5" FontSize="11"/>
-                                    <Button Content="Multi-Drive Redundancy Only" Command="{Binding SetDuplicateFilterModeCommand}" CommandParameter="RedundancyOnly"
-                                            Background="#1E293B" Foreground="#38BDF8" BorderBrush="#334155" Padding="10,5" FontSize="11"/>
-                                </StackPanel>
+                        <!-- Filter Pills -->
+                        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6" Margin="0,0,0,10">
+                            <Button Content="All Groups" Command="{Binding SetDuplicateFilterModeCommand}" CommandParameter="All"
+                                    Background="#1E293B" Foreground="#F8FAFC" BorderBrush="#334155" Padding="10,5" FontSize="11"/>
+                            <Button Content="Same-Drive Waste Only" Command="{Binding SetDuplicateFilterModeCommand}" CommandParameter="DuplicatesOnly"
+                                    Background="#1E293B" Foreground="#FBBF24" BorderBrush="#334155" Padding="10,5" FontSize="11"/>
+                            <Button Content="Multi-Drive Redundancy Only" Command="{Binding SetDuplicateFilterModeCommand}" CommandParameter="RedundancyOnly"
+                                    Background="#1E293B" Foreground="#38BDF8" BorderBrush="#334155" Padding="10,5" FontSize="11"/>
+                        </StackPanel>
 
-                                <!-- Empty state when no duplicates -->
-                                <Border Background="#111827" BorderBrush="#1F2937" BorderThickness="1" CornerRadius="8" Padding="24"
-                                        IsVisible="{Binding !HasDuplicateGroups}" HorizontalAlignment="Stretch">
-                                    <StackPanel Spacing="8" HorizontalAlignment="Center">
-                                        <TextBlock Text="✓ No duplicate files detected" FontSize="16" FontWeight="Bold" Foreground="#10B981" HorizontalAlignment="Center"/>
-                                        <TextBlock Text="All verified destination files have unique content with zero redundant copies." FontSize="12" Foreground="#94A3B8" HorizontalAlignment="Center"/>
-                                    </StackPanel>
-                                </Border>
-
-                                <!-- Items List -->
-                                <ItemsControl ItemsSource="{Binding FilteredDuplicateGroups}">
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate x:DataType="vm:DuplicateGroupViewModel">
-                                            <Border Background="#1E293B" BorderBrush="#334155" BorderThickness="1" CornerRadius="8" Padding="14" Margin="0,0,0,10">
-                                                <StackPanel Spacing="10">
-                                                    <!-- Group Header Bar -->
-                                                    <Grid ColumnDefinitions="*,Auto">
-                                                        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                                                            <TextBlock Text="{Binding FileName}" FontSize="14" FontWeight="Bold" Foreground="#F8FAFC" VerticalAlignment="Center"/>
-                                                            <TextBlock Text="{Binding FileSizeFormatted}" FontSize="12" Foreground="#94A3B8" VerticalAlignment="Center"/>
-                                                            <Border Background="{Binding RedundancyBadgeBackground}" CornerRadius="4" Padding="6,2" VerticalAlignment="Center">
-                                                                <TextBlock Text="{Binding RedundancyBadgeText}" FontSize="10" FontWeight="Bold" Foreground="{Binding RedundancyBadgeForeground}"/>
-                                                            </Border>
-                                                        </StackPanel>
-
-                                                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
-                                                            <TextBlock Text="Reclaimable Space:" FontSize="11" Foreground="#94A3B8" VerticalAlignment="Center"/>
-                                                            <TextBlock Text="{Binding ReclaimableBytesFormatted}" FontSize="13" FontWeight="Bold" Foreground="#F59E0B" VerticalAlignment="Center"/>
-                                                        </StackPanel>
-                                                    </Grid>
-
-                                                    <!-- Nested Duplicate Locations -->
-                                                    <ItemsControl ItemsSource="{Binding Files}">
-                                                        <ItemsControl.ItemTemplate>
-                                                            <DataTemplate x:DataType="vm:DuplicateFileItemViewModel">
-                                                                <Border Background="#111827" CornerRadius="6" Padding="10,6" Margin="0,0,0,6" BorderBrush="#1F2937" BorderThickness="1">
-                                                                    <Border.ContextMenu>
-                                                                        <ContextMenu Background="#1E293B" BorderBrush="#334155">
-                                                                            <MenuItem Header="📁 Reveal in File Manager" Command="{Binding RevealInFolderCommand}"/>
-                                                                            <MenuItem Header="↗ Open in Default App" Command="{Binding OpenFileCommand}"/>
-                                                                            <Separator Background="#334155"/>
-                                                                            <MenuItem Header="📋 Copy Full Path" Command="{Binding CopyFullPathCommand}"/>
-                                                                            <MenuItem Header="📋 Copy Relative Path" Command="{Binding CopyRelativePathCommand}"/>
-                                                                        </ContextMenu>
-                                                                    </Border.ContextMenu>
-                                                                    <Grid ColumnDefinitions="Auto,Auto,*,Auto">
-                                                                        <Border Grid.Column="0" Background="{Binding StatusBadgeBackground}" CornerRadius="4" Padding="6,2" Margin="0,0,8,0" VerticalAlignment="Center">
-                                                                            <TextBlock Text="{Binding StatusBadgeText}" FontSize="10" FontWeight="Bold" Foreground="{Binding StatusBadgeForeground}"/>
-                                                                        </Border>
-                                                                        <Border Grid.Column="1" Background="#1E293B" CornerRadius="4" Padding="6,2" Margin="0,0,8,0" VerticalAlignment="Center">
-                                                                            <TextBlock Text="{Binding DestinationName}" FontSize="11" FontWeight="SemiBold" Foreground="#38BDF8"/>
-                                                                        </Border>
-                                                                        <TextBlock Grid.Column="2" Text="{Binding FullPath}" FontSize="11" Foreground="#E2E8F0"
-                                                                                   VerticalAlignment="Center" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding FullPath}"/>
-                                                                        <Button Grid.Column="3" Content="Reveal in Folder" Command="{Binding RevealInFolderCommand}"
-                                                                                Background="#334155" Foreground="#F8FAFC" FontSize="10" Padding="8,4" Margin="8,0,0,0" VerticalAlignment="Center"/>
-                                                                    </Grid>
-                                                                </Border>
-                                                            </DataTemplate>
-                                                        </ItemsControl.ItemTemplate>
-                                                    </ItemsControl>
-                                                </StackPanel>
-                                            </Border>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
+                        <!-- Empty state when no duplicates -->
+                        <Border Grid.Row="2" Background="#111827" BorderBrush="#1F2937" BorderThickness="1" CornerRadius="8" Padding="24"
+                                IsVisible="{Binding !HasDuplicateGroups}" HorizontalAlignment="Stretch" VerticalAlignment="Top">
+                            <StackPanel Spacing="8" HorizontalAlignment="Center">
+                                <TextBlock Text="✓ No duplicate files detected" FontSize="16" FontWeight="Bold" Foreground="#10B981" HorizontalAlignment="Center"/>
+                                <TextBlock Text="All verified destination files have unique content with zero redundant copies." FontSize="12" Foreground="#94A3B8" HorizontalAlignment="Center"/>
                             </StackPanel>
-                        </ScrollViewer>
+                        </Border>
+
+                        <!-- Virtualized ListBox of Duplicate Groups -->
+                        <ListBox Grid.Row="2" ItemsSource="{Binding FilteredDuplicateGroups}"
+                                 IsVisible="{Binding HasDuplicateGroups}"
+                                 Background="Transparent" BorderThickness="0" Padding="0">
+                            <ListBox.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <VirtualizingStackPanel />
+                                </ItemsPanelTemplate>
+                            </ListBox.ItemsPanel>
+                            <ListBox.Styles>
+                                <Style Selector="ListBoxItem">
+                                    <Setter Property="Padding" Value="0,0,0,10"/>
+                                    <Setter Property="Background" Value="Transparent"/>
+                                </Style>
+                                <Style Selector="ListBoxItem:selected /template/ ContentPresenter">
+                                    <Setter Property="Background" Value="Transparent"/>
+                                </Style>
+                                <Style Selector="ListBoxItem:pointerover /template/ ContentPresenter">
+                                    <Setter Property="Background" Value="Transparent"/>
+                                </Style>
+                            </ListBox.Styles>
+                            <ListBox.ItemTemplate>
+                                <DataTemplate x:DataType="vm:DuplicateGroupViewModel">
+                                    <Border Background="#1E293B" BorderBrush="#334155" BorderThickness="1" CornerRadius="8" Padding="14">
+                                        <StackPanel Spacing="10">
+                                            <!-- Group Header Bar -->
+                                            <Grid ColumnDefinitions="*,Auto">
+                                                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding FileName}" FontSize="14" FontWeight="Bold" Foreground="#F8FAFC" VerticalAlignment="Center"/>
+                                                    <TextBlock Text="{Binding FileSizeFormatted}" FontSize="12" Foreground="#94A3B8" VerticalAlignment="Center"/>
+                                                    <Border Background="{Binding RedundancyBadgeBackground}" CornerRadius="4" Padding="6,2" VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding RedundancyBadgeText}" FontSize="10" FontWeight="Bold" Foreground="{Binding RedundancyBadgeForeground}"/>
+                                                    </Border>
+                                                </StackPanel>
+
+                                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                                    <TextBlock Text="Reclaimable Space:" FontSize="11" Foreground="#94A3B8" VerticalAlignment="Center"/>
+                                                    <TextBlock Text="{Binding ReclaimableBytesFormatted}" FontSize="13" FontWeight="Bold" Foreground="#F59E0B" VerticalAlignment="Center"/>
+                                                </StackPanel>
+                                            </Grid>
+
+                                            <!-- Nested Duplicate Locations -->
+                                            <ItemsControl ItemsSource="{Binding Files}">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate x:DataType="vm:DuplicateFileItemViewModel">
+                                                        <Border Background="#111827" CornerRadius="6" Padding="10,6" Margin="0,0,0,6" BorderBrush="#1F2937" BorderThickness="1">
+                                                            <Border.ContextMenu>
+                                                                <ContextMenu Background="#1E293B" BorderBrush="#334155">
+                                                                    <MenuItem Header="📁 Reveal in File Manager" Command="{Binding RevealInFolderCommand}"/>
+                                                                    <MenuItem Header="↗ Open in Default App" Command="{Binding OpenFileCommand}"/>
+                                                                    <Separator Background="#334155"/>
+                                                                    <MenuItem Header="📋 Copy Full Path" Command="{Binding CopyFullPathCommand}"/>
+                                                                    <MenuItem Header="📋 Copy Relative Path" Command="{Binding CopyRelativePathCommand}"/>
+                                                                </ContextMenu>
+                                                            </Border.ContextMenu>
+                                                            <Grid ColumnDefinitions="Auto,Auto,*,Auto">
+                                                                <Border Grid.Column="0" Background="{Binding StatusBadgeBackground}" CornerRadius="4" Padding="6,2" Margin="0,0,8,0" VerticalAlignment="Center">
+                                                                    <TextBlock Text="{Binding StatusBadgeText}" FontSize="10" FontWeight="Bold" Foreground="{Binding StatusBadgeForeground}"/>
+                                                                </Border>
+                                                                <Border Grid.Column="1" Background="#1E293B" CornerRadius="4" Padding="6,2" Margin="0,0,8,0" VerticalAlignment="Center">
+                                                                    <TextBlock Text="{Binding DestinationName}" FontSize="11" FontWeight="SemiBold" Foreground="#38BDF8"/>
+                                                                </Border>
+                                                                <TextBlock Grid.Column="2" Text="{Binding FullPath}" FontSize="11" Foreground="#E2E8F0"
+                                                                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding FullPath}"/>
+                                                                <Button Grid.Column="3" Content="Reveal in Folder" Command="{Binding RevealInFolderCommand}"
+                                                                        Background="#334155" Foreground="#F8FAFC" FontSize="10" Padding="8,4" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                                                            </Grid>
+                                                        </Border>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
                     </Grid>
                 </Grid>
             </Border>
