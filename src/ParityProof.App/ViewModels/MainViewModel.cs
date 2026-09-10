@@ -15,6 +15,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ParityProof.Core.Enums;
 using ParityProof.Core.Interfaces;
+using ParityProof.Core.Logging;
 using ParityProof.Core.Models;
 using ParityProof.Core.Threading;
 using ParityProof.Engine.Cache;
@@ -24,11 +25,14 @@ using ParityProof.Engine.Reporting;
 using ParityProof.Engine.Transfer;
 using ParityProof.Platform;
 using ParityProof.Platform.Common;
+using Serilog;
 
 namespace ParityProof.App.ViewModels;
 
 public sealed partial class MainViewModel : ViewModelBase, IDisposable
 {
+    private static readonly ILogger _logger = AppLogger.ForContext<MainViewModel>();
+
     private const string COLOR_SAFE = "#10B981"; // Emerald
     private const string COLOR_PARTIAL = "#F59E0B"; // Amber
     private const string COLOR_UNSAFE = "#F43F5E"; // Rose
@@ -359,9 +363,9 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
 
                     InspectorThumbnail = bitmap;
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // Fall back to direct file stream decoding if thumbnail bytes are malformed
+                    _logger.Debug(ex, "Embedded EXIF thumbnail decoding failed for {FilePath}; falling back to full stream decoding", filePath);
                 }
             }
 
@@ -383,8 +387,9 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
                                 FileOptions.SequentialScan);
                             return Bitmap.DecodeToWidth(fs, 360);
                         }
-                        catch
+                        catch (Exception ex)
                         {
+                            _logger.Debug(ex, "Direct stream image decoding failed for {FilePath}", filePath);
                             return null;
                         }
                     }, ct).ConfigureAwait(true);
@@ -399,9 +404,13 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
                 }
             }
         }
-        catch
+        catch (OperationCanceledException)
         {
-            // Silently suppress thumbnail extraction failures
+            // Expected cancellation when user selects a different file
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to load thumbnail preview for {FilePath}", filePath);
         }
         finally
         {
@@ -702,6 +711,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         }
         catch (Exception ex)
         {
+            _logger.Warning(ex, "Failed to canonicalize path for validation: source {SourcePath}, dest {DestPath}", sourcePath, destinationPath);
             validationError = $"Invalid path format: {ex.Message}";
             return false;
         }
@@ -745,6 +755,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         }
         catch (Exception ex)
         {
+            _logger.Warning(ex, "Failed to resolve full path for destination {Path}", trimmed);
             StatusMessage = $"Invalid path: {ex.Message}";
             return;
         }
@@ -916,13 +927,19 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         _operationStopwatch.Restart();
         _elapsedTimer.Start();
 
+        List<BackupDestination> destinationModels = Destinations
+            .Where(d => d.IsEnabled)
+            .Select(d => d.ToModel())
+            .ToList();
+
+        _logger.Information(
+            "Starting verification for source {SourcePath} with {DestCount} destinations in {Mode} mode",
+            trimmedSource,
+            destinationModels.Count,
+            SelectedMode);
+
         try
         {
-            List<BackupDestination> destinationModels = Destinations
-                .Where(d => d.IsEnabled)
-                .Select(d => d.ToModel())
-                .ToList();
-
             Progress<VerificationProgress> progress = new(p =>
             {
                 CurrentProgressPhase = p.Phase;
@@ -1109,6 +1126,14 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
 
             ApplyFilter();
 
+            _logger.Information(
+                "Verification completed in {Duration:F1}s: {Verified} verified, {Missing} missing, {Corrupt} corrupt, safety status {SafetyStatus}",
+                summary.Duration.TotalSeconds,
+                summary.FullyVerifiedFiles,
+                summary.MissingFiles,
+                summary.CorruptFiles,
+                summary.SafetyStatus);
+
             // Refresh destination capacities and check for potential space exhaustion
             long missingBytes = results
                 .Where(r => !r.IsFullyVerified)
@@ -1125,6 +1150,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         }
         catch (OperationCanceledException)
         {
+            _logger.Information("Verification cancelled by user for source {SourcePath}", SourcePath);
             StatusMessage = "Verification cancelled by user.";
             CurrentProgressPhase = "Cancelled.";
             StateBadgeText = "CANCELLED";
@@ -1133,6 +1159,11 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         }
         catch (Exception ex)
         {
+            _logger.Error(
+                ex,
+                "Verification failed for source {SourcePath} across {DestCount} destinations",
+                SourcePath,
+                Destinations.Count);
             StatusMessage = $"Error: {ex.Message}";
             StateBadgeText = "ERROR";
             StateBadgeBackground = "#7F1D1D";
@@ -1214,6 +1245,11 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         _pauseTokenSource = new PauseTokenSource();
         _operationStopwatch.Restart();
         _elapsedTimer.Start();
+
+        _logger.Information(
+            "Starting duplicate scan for source {SourcePath} across {DestCount} destinations",
+            trimmedSource,
+            destinationModels.Count);
 
         try
         {
@@ -1354,9 +1390,16 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
             CurrentProgressPhase = StatusMessage;
             BatchProgressPercentage = 100;
             BatchProgressSummaryText = $"{result.Groups.Count} duplicate groups found";
+
+            _logger.Information(
+                "Duplicate scan completed: {TotalDuplicates} duplicates across {GroupCount} groups, {Reclaimable} reclaimable",
+                result.TotalDuplicateCopies,
+                result.Groups.Count,
+                ReclaimableSpaceFormatted);
         }
         catch (OperationCanceledException)
         {
+            _logger.Information("Duplicate scan cancelled by user for source {SourcePath}", SourcePath);
             StatusMessage = "Duplicate scan cancelled by user.";
             CurrentProgressPhase = "Cancelled.";
             StateBadgeText = "CANCELLED";
@@ -1365,6 +1408,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         }
         catch (Exception ex)
         {
+            _logger.Error(ex, "Duplicate scan failed for source {SourcePath}", SourcePath);
             StatusMessage = $"Duplicate scan error: {ex.Message}";
             StateBadgeText = "ERROR";
             StateBadgeBackground = "#7F1D1D";
@@ -1465,6 +1509,12 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         _operationStopwatch.Restart();
         _elapsedTimer.Start();
 
+        _logger.Information(
+            "Starting copy of {MissingCount} missing files across {DestCount} destinations",
+            missingFiles.Count,
+            activeDestinations.Count);
+
+        List<string> targetPaths = activeDestinations.Select(d => d.RootPath).ToList();
         bool copySucceeded = false;
         try
         {
@@ -1520,7 +1570,6 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
                 EtaText = $"{p.EstimatedTimeRemaining:mm\\:ss}";
             });
 
-            List<string> targetPaths = activeDestinations.Select(d => d.RootPath).ToList();
             int copiedCount = await Task.Run(() => _mediaCopier.CopyMissingFilesAsync(
                 missingFiles,
                 targetPaths,
@@ -1530,9 +1579,14 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
 
             copySucceeded = true;
             StatusMessage = $"Copied and verified {copiedCount} files. Re-running verification...";
+
+            _logger.Information(
+                "Successfully copied and verified {CopiedCount} missing files",
+                copiedCount);
         }
         catch (OperationCanceledException)
         {
+            _logger.Information("File copy cancelled by user for {FileCount} missing files", missingFiles.Count);
             StatusMessage = "File copy cancelled by user.";
             CurrentProgressPhase = "Cancelled.";
             StateBadgeText = "CANCELLED";
@@ -1541,6 +1595,10 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         }
         catch (Exception ex)
         {
+            _logger.Error(
+                ex,
+                "Failed to copy missing files to destinations: {Destinations}",
+                string.Join(", ", targetPaths));
             StatusMessage = $"Copy error: {ex.Message}";
             StateBadgeText = "ERROR";
             StateBadgeBackground = "#7F1D1D";
@@ -1579,7 +1637,16 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     {
         if (!string.IsNullOrEmpty(LastExportedReportPath) && File.Exists(LastExportedReportPath))
         {
-            FileOpener.OpenFile(LastExportedReportPath);
+            try
+            {
+                FileOpener.OpenFile(LastExportedReportPath);
+                _logger.Information("Opened exported audit report: {Path}", LastExportedReportPath);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Failed to open exported report {Path}", LastExportedReportPath);
+                StatusMessage = $"Could not open report: {ex.Message}";
+            }
         }
     }
 
@@ -1637,9 +1704,18 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
             outputPath = Path.Combine(docsDir, fileName);
         }
 
-        await generator.GenerateReportAsync(_lastSummary, _lastResults, outputPath);
-        LastExportedReportPath = outputPath;
-        StatusMessage = $"Audit report exported to: {outputPath}";
+        try
+        {
+            await generator.GenerateReportAsync(_lastSummary, _lastResults, outputPath);
+            LastExportedReportPath = outputPath;
+            StatusMessage = $"Audit report exported to: {outputPath}";
+            _logger.Information("Audit report exported successfully to {OutputPath}", outputPath);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Failed to export audit report to {OutputPath}", outputPath);
+            StatusMessage = $"Export error: {ex.Message}";
+        }
     }
 
     private static string FormatBytes(long bytes)
