@@ -12,6 +12,7 @@ using ParityProof.Core.Enums;
 using ParityProof.Core.Logging;
 using ParityProof.Core.Models;
 using ParityProof.Core.Threading;
+using ParityProof.Core.Utils;
 using ParityProof.Platform.Diagnostics;
 
 namespace ParityProof.Engine.IO;
@@ -142,11 +143,13 @@ public static class FastDirectoryScanner
 
                 if (pauseToken.IsPaused)
                 {
+                    long pFilesPaused = Interlocked.Read(ref totalDiscoveredFiles);
+                    long pBytesPaused = Interlocked.Read(ref totalDiscoveredBytes);
                     progress?.Report(new VerificationProgress(
                         CurrentFile: currentActiveFolder,
-                        ProcessedFiles: (int)Interlocked.Read(ref totalDiscoveredFiles),
+                        ProcessedFiles: (int)pFilesPaused,
                         TotalFiles: referenceTotalFiles,
-                        ProcessedBytes: Interlocked.Read(ref totalDiscoveredBytes),
+                        ProcessedBytes: pBytesPaused,
                         TotalBytes: referenceTotalBytes,
                         Phase: $"{phaseName} (Paused)",
                         CurrentFileBytes: 0,
@@ -154,7 +157,8 @@ public static class FastDirectoryScanner
                         MegaBytesPerSecond: 0,
                         EstimatedTimeRemaining: TimeSpan.Zero,
                         IsPaused: true,
-                        ScanRateFilesPerSecond: 0));
+                        ScanRateFilesPerSecond: 0,
+                        Stages: CreateScanStages(pFilesPaused, pBytesPaused, 0, isCompleted: false)));
                     continue;
                 }
 
@@ -177,7 +181,8 @@ public static class FastDirectoryScanner
                     MegaBytesPerSecond: Math.Round(mbPerSec, 1),
                     EstimatedTimeRemaining: TimeSpan.Zero,
                     IsPaused: false,
-                    ScanRateFilesPerSecond: Math.Round(scanRate, 0)));
+                    ScanRateFilesPerSecond: Math.Round(scanRate, 0),
+                    Stages: CreateScanStages(filesCount, bytesCount, scanRate, isCompleted: false)));
             }
         }, CancellationToken.None);
 
@@ -294,11 +299,12 @@ public static class FastDirectoryScanner
                                         double mbDiscovered = Interlocked.Read(ref totalDiscoveredBytes) / (1024.0 * 1024.0);
                                         double mbPerSec = elapsed > 0 ? (mbDiscovered / elapsed) : 0.0;
 
+                                        long currentBytes = Interlocked.Read(ref totalDiscoveredBytes);
                                         progress?.Report(new VerificationProgress(
                                             CurrentFile: currentActiveFolder,
                                             ProcessedFiles: (int)currentTotal,
                                             TotalFiles: referenceTotalFiles,
-                                            ProcessedBytes: Interlocked.Read(ref totalDiscoveredBytes),
+                                            ProcessedBytes: currentBytes,
                                             TotalBytes: referenceTotalBytes,
                                             Phase: $"{phaseName} ({currentTotal:N0} files found)",
                                             CurrentFileBytes: 0,
@@ -306,7 +312,8 @@ public static class FastDirectoryScanner
                                             MegaBytesPerSecond: Math.Round(mbPerSec, 1),
                                             EstimatedTimeRemaining: TimeSpan.Zero,
                                             IsPaused: false,
-                                            ScanRateFilesPerSecond: Math.Round(scanRate, 0)));
+                                            ScanRateFilesPerSecond: Math.Round(scanRate, 0),
+                                            Stages: CreateScanStages(currentTotal, currentBytes, scanRate, isCompleted: false)));
                                     }
                                 }
 
@@ -314,11 +321,12 @@ public static class FastDirectoryScanner
                                 {
                                     scanStopwatch.Stop();
                                     long currentTotal = Interlocked.Read(ref totalDiscoveredFiles);
+                                    long currentBytes = Interlocked.Read(ref totalDiscoveredBytes);
                                     progress?.Report(new VerificationProgress(
                                         CurrentFile: currentActiveFolder,
                                         ProcessedFiles: (int)currentTotal,
                                         TotalFiles: referenceTotalFiles,
-                                        ProcessedBytes: Interlocked.Read(ref totalDiscoveredBytes),
+                                        ProcessedBytes: currentBytes,
                                         TotalBytes: referenceTotalBytes,
                                         Phase: $"{phaseName} (Paused)",
                                         CurrentFileBytes: 0,
@@ -326,7 +334,8 @@ public static class FastDirectoryScanner
                                         MegaBytesPerSecond: 0,
                                         EstimatedTimeRemaining: TimeSpan.Zero,
                                         IsPaused: true,
-                                        ScanRateFilesPerSecond: 0));
+                                        ScanRateFilesPerSecond: 0,
+                                        Stages: CreateScanStages(currentTotal, currentBytes, 0, isCompleted: false)));
 
                                     await pauseToken.WaitWhilePausedAsync(cancellationToken).ConfigureAwait(false);
                                     scanStopwatch.Start();
@@ -391,9 +400,49 @@ public static class FastDirectoryScanner
             MegaBytesPerSecond: Math.Round(finalMbPerSec, 1),
             EstimatedTimeRemaining: TimeSpan.Zero,
             IsPaused: false,
-            ScanRateFilesPerSecond: Math.Round(finalRate, 0)));
+            ScanRateFilesPerSecond: Math.Round(finalRate, 0),
+            Stages: CreateScanStages(finalResults.Count, totalDiscoveredBytes, finalRate, isCompleted: true)));
 
         return finalResults;
+    }
+
+    private static IReadOnlyList<StageProgressInfo> CreateScanStages(
+        long filesCount,
+        long bytesCount,
+        double scanRate,
+        bool isCompleted = false)
+    {
+        return new StageProgressInfo[]
+        {
+            new(
+                Id: PipelineStageId.Discovery,
+                Title: "Media Discovery",
+                Status: isCompleted ? StageStatus.Completed : StageStatus.Running,
+                Percentage: isCompleted ? 100.0 : 0.0,
+                ProcessedUnits: filesCount,
+                TotalUnits: isCompleted ? filesCount : 0,
+                ProgressText: $"{filesCount:N0} files found ({ByteSizeFormatter.Format(bytesCount)})",
+                TelemetryText: isCompleted ? "Complete" : $"{scanRate:N0} files/s",
+                IsIndeterminate: !isCompleted),
+            new(
+                Id: PipelineStageId.Hashing,
+                Title: "Source Hashing",
+                Status: StageStatus.Pending,
+                Percentage: 0.0,
+                ProcessedUnits: 0,
+                TotalUnits: 0,
+                ProgressText: "Waiting for discovery...",
+                TelemetryText: "-- MB/s"),
+            new(
+                Id: PipelineStageId.DestinationMatching,
+                Title: "Destination Verification",
+                Status: StageStatus.Pending,
+                Percentage: 0.0,
+                ProcessedUnits: 0,
+                TotalUnits: 0,
+                ProgressText: "Waiting for discovery...",
+                TelemetryText: "-- MB/s")
+        };
     }
 
     private static bool MatchesExtensionSpan(ReadOnlySpan<char> targetSpan, IReadOnlySet<string> allowedExtensions)

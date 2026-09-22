@@ -12,6 +12,7 @@ using ParityProof.Core.Interfaces;
 using ParityProof.Core.Logging;
 using ParityProof.Core.Models;
 using ParityProof.Core.Threading;
+using ParityProof.Core.Utils;
 using ParityProof.Engine.IO;
 using ParityProof.Platform.Diagnostics;
 
@@ -61,7 +62,38 @@ public sealed class MultiDestinationVerifier : IVerificationEngine
             TotalFiles: 0,
             ProcessedBytes: 0,
             TotalBytes: 0,
-            Phase: "Scanning Source Directory..."));
+            Phase: "Scanning Source Directory...",
+            Stages: new StageProgressInfo[]
+            {
+                new(
+                    Id: PipelineStageId.Discovery,
+                    Title: "Media Discovery",
+                    Status: StageStatus.Running,
+                    Percentage: 0.0,
+                    ProcessedUnits: 0,
+                    TotalUnits: 0,
+                    ProgressText: "Scanning source and destination directories...",
+                    TelemetryText: "-- files/s",
+                    IsIndeterminate: true),
+                new(
+                    Id: PipelineStageId.Hashing,
+                    Title: "Source Hashing",
+                    Status: StageStatus.Pending,
+                    Percentage: 0.0,
+                    ProcessedUnits: 0,
+                    TotalUnits: 0,
+                    ProgressText: "Waiting for discovery...",
+                    TelemetryText: "-- MB/s"),
+                new(
+                    Id: PipelineStageId.DestinationMatching,
+                    Title: "Destination Verification",
+                    Status: StageStatus.Pending,
+                    Percentage: 0.0,
+                    ProcessedUnits: 0,
+                    TotalUnits: 0,
+                    ProgressText: "Waiting for discovery...",
+                    TelemetryText: "-- MB/s")
+            }));
 
         // Launch concurrent directory scans across source media and all active backup targets simultaneously
         Task<IReadOnlyList<MediaFile>> sourceScanTask = FastDirectoryScanner.ScanDirectoryAsync(
@@ -320,7 +352,20 @@ public sealed class MultiDestinationVerifier : IVerificationEngine
                         CurrentFileProcessedBytes: 0,
                         MegaBytesPerSecond: 0,
                         EstimatedTimeRemaining: TimeSpan.Zero,
-                        IsPaused: true));
+                        IsPaused: true,
+                        Stages: BuildVerificationStages(
+                            totalFiles,
+                            totalBytes,
+                            pFilesPaused,
+                            pBytesPaused,
+                            0.0,
+                            activeVerificationFile,
+                            activeDestinations,
+                            driveBytesRead,
+                            new Dictionary<string, double>(),
+                            driveDisplayNames,
+                            scanDuplicates,
+                            isCompleted: false)));
                     continue;
                 }
 
@@ -464,7 +509,20 @@ public sealed class MultiDestinationVerifier : IVerificationEngine
                     EstimatedTimeRemaining: etaTimeSpan,
                     IsPaused: false,
                     MultiDriveThroughputText: multiDriveThroughputText,
-                    DeviceThroughputs: deviceThroughputs));
+                    DeviceThroughputs: deviceThroughputs,
+                    Stages: BuildVerificationStages(
+                        totalFiles,
+                        totalBytes,
+                        pFiles,
+                        pBytes,
+                        Math.Round(totalMbPerSec, 1),
+                        activeVerificationFile,
+                        activeDestinations,
+                        currentSnapshot,
+                        deviceThroughputs,
+                        driveDisplayNames,
+                        scanDuplicates,
+                        isCompleted: false)));
             }
         }, CancellationToken.None);
 
@@ -723,6 +781,7 @@ public sealed class MultiDestinationVerifier : IVerificationEngine
             Duration: stopwatch.Elapsed,
             DuplicateAnalysis: duplicateAnalysis);
 
+        Dictionary<string, long> finalDriveSnapshot = new(driveBytesRead);
         progress?.Report(new VerificationProgress(
             CurrentFile: string.Empty,
             ProcessedFiles: totalFiles,
@@ -734,8 +793,120 @@ public sealed class MultiDestinationVerifier : IVerificationEngine
             CurrentFileProcessedBytes: 0,
             MegaBytesPerSecond: 0,
             EstimatedTimeRemaining: TimeSpan.Zero,
-            IsPaused: false));
+            IsPaused: false,
+            Stages: BuildVerificationStages(
+                totalFiles,
+                totalBytes,
+                totalFiles,
+                totalBytes,
+                0.0,
+                string.Empty,
+                activeDestinations,
+                finalDriveSnapshot,
+                new Dictionary<string, double>(),
+                driveDisplayNames,
+                scanDuplicates,
+                isCompleted: true)));
 
         return (summary, results);
+    }
+
+    private static IReadOnlyList<StageProgressInfo> BuildVerificationStages(
+        int totalFiles,
+        long totalBytes,
+        long pFiles,
+        long pBytes,
+        double totalMbPerSec,
+        string activeVerificationFile,
+        IReadOnlyList<BackupDestination> activeDestinations,
+        IReadOnlyDictionary<string, long> currentSnapshot,
+        IReadOnlyDictionary<string, double> deviceThroughputs,
+        IReadOnlyDictionary<string, string> driveDisplayNames,
+        bool scanDuplicates,
+        bool isCompleted = false)
+    {
+        double bytePct = isCompleted
+            ? 100.0
+            : (totalBytes > 0 ? Math.Min(100.0, (pBytes / (double)totalBytes) * 100.0) : 0.0);
+
+        List<DestinationProgressInfo> destMeters = new(activeDestinations.Count);
+        foreach (BackupDestination dest in activeDestinations)
+        {
+            long destBytes = currentSnapshot.TryGetValue(dest.Id, out long db) ? db : 0;
+            string displayName = driveDisplayNames.TryGetValue(dest.Id, out string? dn) ? dn : dest.Name;
+            double destMbPerSec = deviceThroughputs.TryGetValue(displayName, out double rate) ? rate : 0.0;
+            double destPct = isCompleted
+                ? 100.0
+                : (totalBytes > 0 ? Math.Min(100.0, (pBytes / (double)totalBytes) * 100.0) : 0.0);
+
+            destMeters.Add(new DestinationProgressInfo(
+                DestinationId: dest.Id,
+                DestinationName: displayName,
+                ProcessedBytes: destBytes,
+                TotalBytes: totalBytes,
+                Percentage: destPct,
+                MegaBytesPerSecond: isCompleted ? 0.0 : destMbPerSec,
+                StatusText: isCompleted ? "Verified" : $"{destMbPerSec:F1} MB/s ({ByteSizeFormatter.Format(destBytes)} read)"));
+        }
+
+        StageStatus hashStatus = isCompleted || (pBytes >= totalBytes && totalBytes > 0)
+            ? StageStatus.Completed
+            : StageStatus.Running;
+
+        StageStatus matchStatus = isCompleted || (pFiles >= totalFiles && totalFiles > 0)
+            ? StageStatus.Completed
+            : StageStatus.Running;
+
+        List<StageProgressInfo> stages = new(4)
+        {
+            new(
+                Id: PipelineStageId.Discovery,
+                Title: "Media Discovery",
+                Status: StageStatus.Completed,
+                Percentage: 100.0,
+                ProcessedUnits: totalFiles,
+                TotalUnits: totalFiles,
+                ProgressText: $"{totalFiles:N0} files found ({ByteSizeFormatter.Format(totalBytes)})",
+                TelemetryText: "Complete"),
+            new(
+                Id: PipelineStageId.Hashing,
+                Title: "Source Hashing",
+                Status: hashStatus,
+                Percentage: bytePct,
+                ProcessedUnits: isCompleted ? totalBytes : pBytes,
+                TotalUnits: totalBytes,
+                ProgressText: isCompleted
+                    ? $"{ByteSizeFormatter.Format(totalBytes)} ({totalFiles:N0} files)"
+                    : $"{ByteSizeFormatter.Format(pBytes)} / {ByteSizeFormatter.Format(totalBytes)} ({pFiles:N0} / {totalFiles:N0} files)",
+                TelemetryText: isCompleted ? "Complete" : $"{totalMbPerSec:F1} MB/s",
+                ActiveFileName: isCompleted ? null : activeVerificationFile),
+            new(
+                Id: PipelineStageId.DestinationMatching,
+                Title: "Destination Verification",
+                Status: matchStatus,
+                Percentage: bytePct,
+                ProcessedUnits: isCompleted ? totalFiles : pFiles,
+                TotalUnits: totalFiles,
+                ProgressText: isCompleted
+                    ? $"{totalFiles:N0} / {totalFiles:N0} files verified"
+                    : $"{pFiles:N0} / {totalFiles:N0} files verified",
+                TelemetryText: isCompleted ? "Complete" : $"{totalMbPerSec:F1} MB/s",
+                DestinationMeters: destMeters)
+        };
+
+        if (scanDuplicates)
+        {
+            stages.Add(new StageProgressInfo(
+                Id: PipelineStageId.DuplicateAnalysis,
+                Title: "Duplicate Analysis",
+                Status: isCompleted ? StageStatus.Completed : StageStatus.Pending,
+                Percentage: isCompleted ? 100.0 : 0.0,
+                ProcessedUnits: isCompleted ? totalFiles : 0,
+                TotalUnits: totalFiles,
+                ProgressText: isCompleted ? "Complete" : "Pending verification completion",
+                TelemetryText: isCompleted ? "Complete" : "--"));
+        }
+
+        return stages;
     }
 }

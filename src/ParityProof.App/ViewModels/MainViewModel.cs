@@ -250,6 +250,12 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     private string _copyProgressText = string.Empty;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasPipelineStages))]
+    private ObservableCollection<StageProgressViewModel> _pipelineStages = new();
+
+    public bool HasPipelineStages => PipelineStages.Count > 0;
+
+    [ObservableProperty]
     private double _copyProgressPercentage;
 
     [ObservableProperty]
@@ -915,6 +921,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         PauseResumeButtonBackground = "#D97706";
         BatchProgressPercentage = 0;
         BatchProgressSummaryText = "Scanning directory...";
+        PipelineStages.Clear();
         CurrentFileProgressPercentage = 0;
         ThroughputText = "0.0 MB/s";
         EtaText = "--:--";
@@ -966,9 +973,14 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
                 if (p.TotalFiles > 0)
                 {
                     IsBatchIndeterminate = false;
-                    BatchProgressPercentage = (p.ProcessedFiles / (double)p.TotalFiles) * 100.0;
+                    double bytePercentage = p.TotalBytes > 0
+                        ? (p.ProcessedBytes / (double)p.TotalBytes) * 100.0
+                        : (p.ProcessedFiles / (double)p.TotalFiles) * 100.0;
+                    BatchProgressPercentage = Math.Min(100.0, bytePercentage);
                     ProgressPercentage = BatchProgressPercentage;
-                    BatchProgressSummaryText = $"{BatchProgressPercentage:F0}% ({p.ProcessedFiles} / {p.TotalFiles})";
+                    BatchProgressSummaryText = p.TotalBytes > 0
+                        ? $"{BatchProgressPercentage:F0}% ({FormatBytes(p.ProcessedBytes)} / {FormatBytes(p.TotalBytes)})"
+                        : $"{BatchProgressPercentage:F0}% ({p.ProcessedFiles} / {p.TotalFiles})";
                     FilesCounterText = $"{p.ProcessedFiles} / {p.TotalFiles}";
                 }
                 else
@@ -979,6 +991,11 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
                         ? $"Scanning: {p.ProcessedFiles} files ({FormatBytes(p.ProcessedBytes)})"
                         : $"Scanning: {p.ProcessedFiles} files";
                     FilesCounterText = $"{p.ProcessedFiles} found";
+                }
+
+                if (p.Stages is not null && p.Stages.Count > 0)
+                {
+                    UpdatePipelineStages(p.Stages);
                 }
 
                 if (!string.IsNullOrEmpty(p.CurrentFile))
@@ -1497,6 +1514,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         PauseResumeButtonBackground = "#D97706";
         BatchProgressPercentage = 0;
         BatchProgressSummaryText = "0% (0 / 0)";
+        PipelineStages.Clear();
         CurrentFileProgressPercentage = 0;
         ThroughputText = "0.0 MB/s";
         EtaText = "--:--";
@@ -1568,6 +1586,11 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
 
                 CopyEtaText = $"ETA: {p.EstimatedTimeRemaining:mm\\:ss}";
                 EtaText = $"{p.EstimatedTimeRemaining:mm\\:ss}";
+
+                if (p.Stages is not null && p.Stages.Count > 0)
+                {
+                    UpdatePipelineStages(p.Stages);
+                }
             });
 
             int copiedCount = await Task.Run(() => _mediaCopier.CopyMissingFilesAsync(
@@ -1737,6 +1760,45 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         VerificationMode.Full => "Full",
         _ => mode.ToString()
     };
+
+    private void UpdatePipelineStages(IReadOnlyList<StageProgressInfo> stageInfos)
+    {
+        Dictionary<PipelineStageId, StageProgressInfo> incoming = new(stageInfos.Count);
+        foreach (StageProgressInfo info in stageInfos)
+        {
+            incoming[info.Id] = info;
+        }
+
+        for (int i = PipelineStages.Count - 1; i >= 0; i--)
+        {
+            if (!incoming.ContainsKey(PipelineStages[i].StageId))
+            {
+                PipelineStages.RemoveAt(i);
+            }
+        }
+
+        foreach (StageProgressInfo info in stageInfos)
+        {
+            StageProgressViewModel? existing = null;
+            foreach (StageProgressViewModel vm in PipelineStages)
+            {
+                if (vm.StageId == info.Id)
+                {
+                    existing = vm;
+                    break;
+                }
+            }
+
+            if (existing is not null)
+            {
+                existing.UpdateFrom(info);
+            }
+            else
+            {
+                PipelineStages.Add(new StageProgressViewModel(info));
+            }
+        }
+    }
 
     public void Dispose()
     {

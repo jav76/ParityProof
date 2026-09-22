@@ -13,6 +13,7 @@ using ParityProof.Core.Interfaces;
 using ParityProof.Core.Logging;
 using ParityProof.Core.Models;
 using ParityProof.Core.Threading;
+using ParityProof.Core.Utils;
 using ParityProof.Engine.Hashing;
 using ParityProof.Engine.IO;
 using ParityProof.Platform.Diagnostics;
@@ -58,13 +59,17 @@ public sealed class DuplicateAnalyzer : IDuplicateAnalyzer
             return DuplicateAnalysisResult.Empty;
         }
 
+        int srcFilesCount = sourceFiles.Count;
+        long srcFilesBytes = sourceFiles.Sum(f => f.FileLength);
+
         progress?.Report(new VerificationProgress(
             CurrentFile: string.Empty,
             ProcessedFiles: 0,
             TotalFiles: 0,
             ProcessedBytes: 0,
             TotalBytes: 0,
-            Phase: "Auditing destinations for duplicates from source directory..."));
+            Phase: "Auditing destinations for duplicates from source directory...",
+            Stages: CreateDuplicateStages(srcFilesCount, srcFilesBytes, 0, 0, 0.0, null, isCompleted: false)));
 
         List<DestinationFileEntry> allEntries = new();
         foreach (BackupDestination dest in destinations.Where(d => d.IsEnabled))
@@ -178,6 +183,7 @@ public sealed class DuplicateAnalyzer : IDuplicateAnalyzer
             CurrentFileProcessedBytes: 0,
             MegaBytesPerSecond: 0,
             EstimatedTimeRemaining: TimeSpan.Zero,
+            Stages: CreateDuplicateStages(srcFilesCount, srcFilesBytes, totalCandidates, 0, 0.0, null, isCompleted: false),
             IsPaused: false));
 
         // Hydrate from SQLite cache if available
@@ -272,7 +278,8 @@ public sealed class DuplicateAnalyzer : IDuplicateAnalyzer
                     CurrentFileProcessedBytes: currentFile.FileLength,
                     MegaBytesPerSecond: Math.Round(mbPerSec, 1),
                     EstimatedTimeRemaining: TimeSpan.FromSeconds(remSec),
-                    IsPaused: pauseToken.IsPaused));
+                    IsPaused: pauseToken.IsPaused,
+                    Stages: CreateDuplicateStages(srcFilesCount, srcFilesBytes, totalCandidates, completed, mbPerSec, currentFile.RelativePath, isCompleted: false)));
             }).ConfigureAwait(false);
 
         List<DestinationFileEntry> hydratedCandidates = hydratedArray.ToList();
@@ -468,7 +475,8 @@ public sealed class DuplicateAnalyzer : IDuplicateAnalyzer
                     CurrentFileProcessedBytes: currentFile.FileLength,
                     MegaBytesPerSecond: Math.Round(mbPerSec, 1),
                     EstimatedTimeRemaining: TimeSpan.FromSeconds(remSec),
-                    IsPaused: pauseToken.IsPaused));
+                    IsPaused: pauseToken.IsPaused,
+                    Stages: CreateDuplicateStages(srcFilesCount, srcFilesBytes, totalConfirmed, completed, mbPerSec, currentFile.RelativePath, isCompleted: false)));
             }).ConfigureAwait(false);
 
         if (_cache is not null && !cacheUpsertBag.IsEmpty)
@@ -617,5 +625,62 @@ public sealed class DuplicateAnalyzer : IDuplicateAnalyzer
         {
             ArrayPool<byte>.Shared.Return(rentedBuffer);
         }
+    }
+
+    private static IReadOnlyList<StageProgressInfo> CreateDuplicateStages(
+        int totalFiles,
+        long totalBytes,
+        int totalCandidates,
+        long processedCandidates,
+        double mbPerSec,
+        string? activeFile,
+        bool isCompleted = false)
+    {
+        double dupPct = isCompleted
+            ? 100.0
+            : (totalCandidates > 0 ? Math.Min(100.0, (processedCandidates / (double)totalCandidates) * 100.0) : 0.0);
+
+        return new StageProgressInfo[]
+        {
+            new(
+                Id: PipelineStageId.Discovery,
+                Title: "Media Discovery",
+                Status: StageStatus.Completed,
+                Percentage: 100.0,
+                ProcessedUnits: totalFiles,
+                TotalUnits: totalFiles,
+                ProgressText: $"{totalFiles:N0} files ({ByteSizeFormatter.Format(totalBytes)})",
+                TelemetryText: "Complete"),
+            new(
+                Id: PipelineStageId.Hashing,
+                Title: "Source Hashing",
+                Status: StageStatus.Completed,
+                Percentage: 100.0,
+                ProcessedUnits: totalBytes,
+                TotalUnits: totalBytes,
+                ProgressText: $"{ByteSizeFormatter.Format(totalBytes)} ({totalFiles:N0} files)",
+                TelemetryText: "Complete"),
+            new(
+                Id: PipelineStageId.DestinationMatching,
+                Title: "Destination Verification",
+                Status: StageStatus.Completed,
+                Percentage: 100.0,
+                ProcessedUnits: totalFiles,
+                TotalUnits: totalFiles,
+                ProgressText: $"{totalFiles:N0} / {totalFiles:N0} files verified",
+                TelemetryText: "Complete"),
+            new(
+                Id: PipelineStageId.DuplicateAnalysis,
+                Title: "Duplicate Analysis",
+                Status: isCompleted ? StageStatus.Completed : StageStatus.Running,
+                Percentage: dupPct,
+                ProcessedUnits: processedCandidates,
+                TotalUnits: totalCandidates,
+                ProgressText: isCompleted
+                    ? $"{totalCandidates:N0} candidates checked"
+                    : $"{processedCandidates:N0} / {totalCandidates:N0} candidates checked",
+                TelemetryText: isCompleted ? "Complete" : (mbPerSec > 0 ? $"{mbPerSec:F1} MB/s" : "Auditing..."),
+                ActiveFileName: isCompleted ? null : activeFile)
+        };
     }
 }
