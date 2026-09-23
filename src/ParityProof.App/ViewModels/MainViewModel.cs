@@ -54,6 +54,12 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     private VerificationSummary? _lastSummary;
     private IReadOnlyList<VerificationResultItem> _lastResults = Array.Empty<VerificationResultItem>();
 
+    public string AppVersionDisplay => BuildInfo.Current.DisplayVersion;
+    public string WindowTitle => $"ParityProof - {BuildInfo.Current.DisplayVersion}";
+    public string BuildCommitSha => BuildInfo.Current.CommitSha;
+    public string BuildSemVer => BuildInfo.Current.SemVer;
+    public string BuildConfiguration => BuildInfo.Current.IsDebug ? "Debug" : "Release";
+
     [ObservableProperty]
     private string _sourcePath = string.Empty;
 

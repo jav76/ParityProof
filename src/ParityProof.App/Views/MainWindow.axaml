@@ -13,7 +13,7 @@
         Background="#0B0F17"
         Foreground="#F3F4F6"
         MinWidth="960" MinHeight="650"
-        Title="ParityProof : Pro Media Ingest &amp; Backup Verification">
+        Title="{Binding WindowTitle}">
 
     <Design.DataContext>
         <vm:MainViewModel />
@@ -37,7 +37,12 @@
         <!-- 1. Header Bar -->
         <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,16">
             <StackPanel Grid.Column="0" Orientation="Vertical" Spacing="4">
-                <TextBlock Text="PARITYPROOF" FontSize="20" FontWeight="Bold" Foreground="#38BDF8" LetterSpacing="1"/>
+                <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <TextBlock Text="PARITYPROOF" FontSize="20" FontWeight="Bold" Foreground="#38BDF8" LetterSpacing="1"/>
+                    <Border Background="#1E293B" CornerRadius="4" Padding="6,2" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding AppVersionDisplay}" FontSize="11" Foreground="#94A3B8" FontFamily="Consolas,monospace"/>
+                    </Border>
+                </StackPanel>
                 <TextBlock Text="Cross-Platform High-Performance Media Backup &amp; Integrity Verification"
                            FontSize="12" Foreground="#94A3B8"/>
             </StackPanel>
@@ -56,6 +61,34 @@
                         AutomationProperties.Name="Open Exported Verification Report"
                         IsVisible="{Binding HasExportedReport}"
                         Background="#0F766E" Foreground="#F0FDFA" BorderBrush="#14B8A6" Padding="12,6"/>
+                <Button Content="ℹ️ About"
+                        AutomationProperties.Name="About ParityProof and Build Information"
+                        Background="#1E293B" Foreground="#E2E8F0" BorderBrush="#334155" Padding="10,6">
+                    <Button.Flyout>
+                        <Flyout Placement="BottomEdgeAlignedRight">
+                            <Border Background="#0F172A" BorderBrush="#1E293B" BorderThickness="1" CornerRadius="8" Padding="16" Width="300">
+                                <StackPanel Spacing="8">
+                                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                        <TextBlock Text="PARITYPROOF" FontSize="15" FontWeight="Bold" Foreground="#38BDF8"/>
+                                        <Border Background="#1E293B" CornerRadius="4" Padding="4,1" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding BuildConfiguration}" FontSize="9" FontWeight="Bold" Foreground="#A78BFA"/>
+                                        </Border>
+                                    </StackPanel>
+                                    <TextBlock Text="{Binding AppVersionDisplay}" FontSize="12" Foreground="#E2E8F0" FontWeight="SemiBold"/>
+                                    <Separator Background="#1E293B" Height="1"/>
+                                    <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto" Margin="0,2">
+                                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Version:" FontSize="11" Foreground="#64748B" Margin="0,0,10,4"/>
+                                        <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding BuildSemVer}" FontSize="11" Foreground="#94A3B8" FontFamily="Consolas,monospace"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Commit:" FontSize="11" Foreground="#64748B" Margin="0,0,10,4"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding BuildCommitSha}" FontSize="11" Foreground="#94A3B8" FontFamily="Consolas,monospace"/>
+                                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Build:" FontSize="11" Foreground="#64748B"/>
+                                        <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding BuildConfiguration}" FontSize="11" Foreground="#94A3B8"/>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+                        </Flyout>
+                    </Button.Flyout>
+                </Button>
             </StackPanel>
         </Grid>
 
