@@ -36,6 +36,7 @@
                        Type="integer"
                        Value="1"
                        KeyPath="yes" />
+      </Component>
       <Component Directory="INSTALLFOLDER">
         <RegistryKey Root="HKLM" Key="SYSTEM\CurrentControlSet\Services\EventLog\Application\ParityProof">
           <RegistryValue Type="expandable" Name="EventMessageFile" Value="%SystemRoot%\Microsoft.NET\Framework64\v4.0.30319\EventLogMessages.dll" />
