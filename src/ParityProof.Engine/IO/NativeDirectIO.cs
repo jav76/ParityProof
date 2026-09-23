@@ -36,6 +36,24 @@ public static class NativeDirectIO
     private const int POSIX_FADV_SEQUENTIAL = 2;
     private const int POSIX_FADV_NOREUSE = 5;
 
+    private const int POSIX_FADV_DONTNEED = 4;
+
+    public static void EvictPageCache(SafeFileHandle handle, long offset, long length)
+    {
+        if (OperatingSystem.IsLinux() && !handle.IsInvalid && !handle.IsClosed)
+        {
+            try
+            {
+                int fd = (int)handle.DangerousGetHandle();
+                _ = LinuxPosixFadvise(fd, offset, length, POSIX_FADV_DONTNEED);
+            }
+            catch
+            {
+                // Best-effort page cache eviction
+            }
+        }
+    }
+
     public static SafeFileHandle OpenDirectOrSequential(string filePath)
     {
         if (OperatingSystem.IsWindows())

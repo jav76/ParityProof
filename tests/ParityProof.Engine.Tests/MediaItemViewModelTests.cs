@@ -392,4 +392,57 @@ public sealed class MediaItemViewModelTests
             Assert.NotEqual(Color.Parse("#334155"), borderBrush.Color);
         }
     }
+
+    [Fact]
+    public void DestinationComparison_UsesFriendlyName_WhenMappingProvided()
+    {
+        MediaFile source = new(
+            RelativePath: "DCIM/100CANON/IMG_0001.CR3",
+            FullPath: "/card/DCIM/100CANON/IMG_0001.CR3",
+            FileLength: 1024,
+            LastWriteTimeUtc: DateTime.UtcNow,
+            Category: MediaCategory.PhotoRaw);
+
+        Dictionary<string, FileMatchStatus> destStatuses = new()
+        {
+            ["dest_1"] = new("dest_1", "/backup", MediaStatus.Verified, "/backup/IMG_0001.CR3", null)
+        };
+
+        VerificationResultItem resultItem = new(source, destStatuses);
+        Dictionary<string, string> destNames = new()
+        {
+            ["dest_1"] = "Samsung T7 Shield"
+        };
+
+        MediaItemViewModel vm = new(resultItem, destNames);
+
+        Assert.Single(vm.DestinationComparisons);
+        Assert.Equal("dest_1", vm.DestinationComparisons[0].DestinationId);
+        Assert.Equal("Samsung T7 Shield", vm.DestinationComparisons[0].DestinationName);
+        Assert.Contains("Samsung T7 Shield", vm.DestinationSummary);
+    }
+
+    [Fact]
+    public void DestinationComparison_FallsBackToId_WhenMappingMissing()
+    {
+        MediaFile source = new(
+            RelativePath: "DCIM/100CANON/IMG_0001.CR3",
+            FullPath: "/card/DCIM/100CANON/IMG_0001.CR3",
+            FileLength: 1024,
+            LastWriteTimeUtc: DateTime.UtcNow,
+            Category: MediaCategory.PhotoRaw);
+
+        Dictionary<string, FileMatchStatus> destStatuses = new()
+        {
+            ["dest_2"] = new("dest_2", "/backup2", MediaStatus.Missing, null, null)
+        };
+
+        VerificationResultItem resultItem = new(source, destStatuses);
+        MediaItemViewModel vm = new(resultItem);
+
+        Assert.Single(vm.DestinationComparisons);
+        Assert.Equal("dest_2", vm.DestinationComparisons[0].DestinationId);
+        Assert.Equal("dest_2", vm.DestinationComparisons[0].DestinationName);
+        Assert.Contains("dest_2", vm.DestinationSummary);
+    }
 }

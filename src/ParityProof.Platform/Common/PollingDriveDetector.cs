@@ -14,6 +14,7 @@ public sealed class PollingDriveDetector : IDriveDetector
 
     private readonly HashSet<string> _knownDrives = new(StringComparer.OrdinalIgnoreCase);
     private Timer? _timer;
+    private int _isPolling;
     private bool _isDisposed;
 
     public event EventHandler<DriveNotificationEventArgs>? DriveChanged;
@@ -40,6 +41,11 @@ public sealed class PollingDriveDetector : IDriveDetector
     private void OnPoll(object? state)
     {
         if (_isDisposed)
+        {
+            return;
+        }
+
+        if (Interlocked.CompareExchange(ref _isPolling, 1, 0) != 0)
         {
             return;
         }
@@ -96,6 +102,10 @@ public sealed class PollingDriveDetector : IDriveDetector
         catch
         {
             // Ignore temporary drive enumeration exceptions
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _isPolling, 0);
         }
     }
 

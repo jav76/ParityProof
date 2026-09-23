@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text;
 using ParityProof.Core.Enums;
 
 namespace ParityProof.Platform.Diagnostics;
@@ -8,6 +9,7 @@ namespace ParityProof.Platform.Diagnostics;
 public static class StorageMediaDetector
 {
     public const int DEFAULT_NETWORK_WORKERS = 8;
+    public const int MAX_NETWORK_SCAN_WORKERS = 4;
     public const int DEFAULT_SSD_WORKERS = 8;
     public const int DEFAULT_HDD_WORKERS = 2;
     public const int MIN_PARALLEL_WORKERS = 2;
@@ -19,6 +21,38 @@ public static class StorageMediaDetector
     {
         "nfs", "nfs4", "cifs", "smb", "smbfs", "fuse.sshfs", "davfs", "ceph", "glusterfs", "9p", "afpfs"
     };
+
+    public static string UnescapeOctal(string path)
+    {
+        if (string.IsNullOrEmpty(path) || !path.Contains('\\'))
+        {
+            return path;
+        }
+
+        StringBuilder sb = new(path.Length);
+        int i = 0;
+        while (i < path.Length)
+        {
+            if (path[i] == '\\' && i + 3 < path.Length &&
+                path[i + 1] >= '0' && path[i + 1] <= '7' &&
+                path[i + 2] >= '0' && path[i + 2] <= '7' &&
+                path[i + 3] >= '0' && path[i + 3] <= '7')
+            {
+                int octalVal = ((path[i + 1] - '0') << 6) |
+                               ((path[i + 2] - '0') << 3) |
+                               (path[i + 3] - '0');
+                sb.Append((char)octalVal);
+                i += 4;
+            }
+            else
+            {
+                sb.Append(path[i]);
+                i++;
+            }
+        }
+
+        return sb.ToString();
+    }
 
     public static StorageMediaType Detect(string path)
     {
@@ -56,13 +90,24 @@ public static class StorageMediaDetector
 
     public static int GetRecommendedWorkerCount(string path)
     {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return DEFAULT_FALLBACK_WORKERS;
+        }
+
         int cpuCores = Environment.ProcessorCount;
+
+        if (IsRemovableStorage(path))
+        {
+            return Math.Clamp(cpuCores, DEFAULT_SD_CARD_WORKERS, MAX_SD_CARD_WORKERS);
+        }
+
         StorageMediaType mediaType = Detect(path);
 
         return mediaType switch
         {
             StorageMediaType.RotationalHdd => DEFAULT_HDD_WORKERS,
-            StorageMediaType.NetworkShare => Math.Clamp(cpuCores, MIN_PARALLEL_WORKERS, DEFAULT_NETWORK_WORKERS),
+            StorageMediaType.NetworkShare => Math.Clamp(cpuCores / 2, MIN_PARALLEL_WORKERS, MAX_NETWORK_SCAN_WORKERS),
             StorageMediaType.SolidState => Math.Clamp(cpuCores, MIN_PARALLEL_WORKERS, DEFAULT_SSD_WORKERS),
             _ => Math.Clamp(cpuCores / 2, MIN_PARALLEL_WORKERS, DEFAULT_SSD_WORKERS)
         };
@@ -123,7 +168,27 @@ public static class StorageMediaDetector
                     if (File.Exists(removablePath))
                     {
                         string val = File.ReadAllText(removablePath).Trim();
-                        return string.Equals(val, "1", StringComparison.Ordinal);
+                        if (string.Equals(val, "1", StringComparison.Ordinal))
+                        {
+                            return true;
+                        }
+                    }
+
+                    string blockSysfs = Path.Combine("/sys/block", baseDev);
+                    if (Directory.Exists(blockSysfs))
+                    {
+                        try
+                        {
+                            string realTarget = Path.GetFullPath(blockSysfs);
+                            if (realTarget.Contains("/usb", StringComparison.OrdinalIgnoreCase))
+                            {
+                                return true;
+                            }
+                        }
+                        catch
+                        {
+                            // Ignore symlink resolution failure
+                        }
                     }
                 }
             }
@@ -162,7 +227,7 @@ public static class StorageMediaDetector
             if (parts.Length >= 2)
             {
                 string device = parts[0];
-                string mountPoint = parts[1];
+                string mountPoint = UnescapeOctal(parts[1]);
 
                 if (fullPath.StartsWith(mountPoint, StringComparison.Ordinal) &&
                     mountPoint.Length > longestMountPoint.Length)
@@ -196,7 +261,7 @@ public static class StorageMediaDetector
                 if (parts.Length >= 3)
                 {
                     string device = parts[0];
-                    string mountPoint = parts[1];
+                    string mountPoint = UnescapeOctal(parts[1]);
                     string fsType = parts[2];
 
                     if (fullPath.StartsWith(mountPoint, StringComparison.Ordinal) &&
