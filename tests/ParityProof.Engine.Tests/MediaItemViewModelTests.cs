@@ -247,6 +247,21 @@ public sealed class MediaItemViewModelTests
     }
 
     [Fact]
+    public void MainViewModel_CancelConfirmationMessage_AdaptsToIsCopying()
+    {
+        using MainViewModel vm = new();
+
+        Assert.False(vm.IsCopying);
+        Assert.Equal("Verification progress will stop immediately.", vm.CancelConfirmationMessage);
+
+        vm.IsCopying = true;
+        Assert.Equal("Any partial file transfer will be safely removed.", vm.CancelConfirmationMessage);
+
+        vm.IsCopying = false;
+        Assert.Equal("Verification progress will stop immediately.", vm.CancelConfirmationMessage);
+    }
+
+    [Fact]
     public void DuplicateFileItemViewModel_ExposesFullPathAndProperties()
     {
         MediaFile mediaFile = new(

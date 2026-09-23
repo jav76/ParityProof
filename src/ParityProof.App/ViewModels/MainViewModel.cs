@@ -98,7 +98,12 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanStartOperation))]
     [NotifyPropertyChangedFor(nameof(CanStartCopy))]
+    [NotifyPropertyChangedFor(nameof(CancelConfirmationMessage))]
     private bool _isCopying;
+
+    public string CancelConfirmationMessage => IsCopying
+        ? "Any partial file transfer will be safely removed."
+        : "Verification progress will stop immediately.";
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanStartOperation))]
@@ -1964,7 +1969,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
 
             for (int i = PipelineStages.Count - 1; i >= 0; i--)
             {
-                if (!incoming.ContainsKey(PipelineStages[i].StageId))
+                if (i < PipelineStages.Count && !incoming.ContainsKey(PipelineStages[i].StageId))
                 {
                     PipelineStages.RemoveAt(i);
                 }
@@ -1991,9 +1996,9 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
                     PipelineStages.Add(new StageProgressViewModel(info));
                 }
             }
-        }
 
-        OnPropertyChanged(nameof(HasPipelineStages));
+            OnPropertyChanged(nameof(HasPipelineStages));
+        }
     }
 
     private void SyncDestinationTelemetries(IReadOnlyList<DestinationTelemetryInfo> incoming)
@@ -2056,7 +2061,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         {
             for (int i = DestinationTelemetries.Count - 1; i >= 0; i--)
             {
-                if (!incomingMap.ContainsKey(DestinationTelemetries[i].DestinationId))
+                if (i < DestinationTelemetries.Count && !incomingMap.ContainsKey(DestinationTelemetries[i].DestinationId))
                 {
                     DestinationTelemetries.RemoveAt(i);
                 }
