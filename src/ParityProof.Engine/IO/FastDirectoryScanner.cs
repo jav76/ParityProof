@@ -45,7 +45,8 @@ public static class FastDirectoryScanner
     {
         "$recycle.bin", "system volume information", ".trashes", ".fseventsd",
         ".spotlight-v100", ".git", ".github", "node_modules", ".cache",
-        "#recycle", "@eadir", "appdata", ".thumbnails", ".trash", "__pycache__"
+        "#recycle", "@eadir", "appdata", ".thumbnails", ".trash", "__pycache__",
+        ".zfs", "#snapshot", ".snapshots", ".recycle", "@recycle"
     };
 
     public static MediaCategory CategorizeExtension(string extension)
@@ -317,7 +318,8 @@ public static class FastDirectoryScanner
                                         }
 
                                         string dirName = entry.FileName.ToString();
-                                        if (!IgnoredDirectories.Contains(dirName))
+                                        if (!IgnoredDirectories.Contains(dirName) &&
+                                            !dirName.StartsWith(".trash-", StringComparison.OrdinalIgnoreCase))
                                         {
                                             string subDirPath = entry.ToFullPath();
                                             string canonicalSubDir = Path.GetFullPath(subDirPath).TrimEnd(

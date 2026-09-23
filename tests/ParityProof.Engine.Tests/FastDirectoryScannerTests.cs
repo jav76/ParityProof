@@ -74,6 +74,32 @@ public sealed class FastDirectoryScannerTests : IDisposable
         Assert.EndsWith("PHOTO1.JPG", files[0].FullPath);
     }
 
+    [Fact]
+    public void ScanDirectory_SkipsNasSnapshotAndTrashDirectories()
+    {
+        string validDir = Path.Combine(_testDir, "ValidMedia");
+        string zfsDir = Path.Combine(_testDir, ".zfs", "snapshot", "hourly.0");
+        string snapDir = Path.Combine(_testDir, "#snapshot", "daily");
+        string trashDir = Path.Combine(_testDir, ".Trash-1000");
+
+        Directory.CreateDirectory(validDir);
+        Directory.CreateDirectory(zfsDir);
+        Directory.CreateDirectory(snapDir);
+        Directory.CreateDirectory(trashDir);
+
+        File.WriteAllBytes(Path.Combine(validDir, "KEEP_ME.JPG"), new byte[100]);
+        File.WriteAllBytes(Path.Combine(zfsDir, "IGNORE_ZFS.JPG"), new byte[100]);
+        File.WriteAllBytes(Path.Combine(snapDir, "IGNORE_SNAP.JPG"), new byte[100]);
+        File.WriteAllBytes(Path.Combine(trashDir, "IGNORE_TRASH.JPG"), new byte[100]);
+
+        IReadOnlyList<MediaFile> files = FastDirectoryScanner.ScanDirectory(
+            _testDir,
+            FilterPreset.PhotosOnly);
+
+        Assert.Single(files);
+        Assert.EndsWith("KEEP_ME.JPG", files[0].FullPath);
+    }
+
     public void Dispose()
     {
         try
