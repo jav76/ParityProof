@@ -31,9 +31,19 @@
         <KeyBinding Gesture="Ctrl+3" Command="{Binding SetActiveTabCommand}" CommandParameter="Missing"/>
         <KeyBinding Gesture="Ctrl+4" Command="{Binding SetActiveTabCommand}" CommandParameter="Corrupt"/>
         <KeyBinding Gesture="Ctrl+5" Command="{Binding SetActiveTabCommand}" CommandParameter="Duplicates"/>
+        <KeyBinding Gesture="Ctrl+OemPlus" Command="{Binding IncreaseTextScaleCommand}"/>
+        <KeyBinding Gesture="Ctrl+Add" Command="{Binding IncreaseTextScaleCommand}"/>
+        <KeyBinding Gesture="Ctrl+OemMinus" Command="{Binding DecreaseTextScaleCommand}"/>
+        <KeyBinding Gesture="Ctrl+Subtract" Command="{Binding DecreaseTextScaleCommand}"/>
+        <KeyBinding Gesture="Ctrl+D0" Command="{Binding ResetTextScaleCommand}"/>
+        <KeyBinding Gesture="Ctrl+NumPad0" Command="{Binding ResetTextScaleCommand}"/>
     </Window.KeyBindings>
 
-    <Grid RowDefinitions="Auto,Auto,*" Margin="20">
+    <LayoutTransformControl>
+        <LayoutTransformControl.LayoutTransform>
+            <ScaleTransform ScaleX="{Binding TextScale}" ScaleY="{Binding TextScale}"/>
+        </LayoutTransformControl.LayoutTransform>
+        <Grid RowDefinitions="Auto,Auto,*" Margin="20">
         <!-- 1. Header Bar -->
         <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,16">
             <StackPanel Grid.Column="0" Orientation="Vertical" Spacing="4">
@@ -61,9 +71,67 @@
                         AutomationProperties.Name="Open Exported Verification Report"
                         IsVisible="{Binding HasExportedReport}"
                         Background="#0F766E" Foreground="#F0FDFA" BorderBrush="#14B8A6" Padding="12,6"/>
-                <Button Content="ℹ️ About"
-                        AutomationProperties.Name="About ParityProof and Build Information"
-                        Background="#1E293B" Foreground="#E2E8F0" BorderBrush="#334155" Padding="10,6">
+                <Button AutomationProperties.Name="Text and Interface Scaling Accessibility Options"
+                        Background="#1E293B" Foreground="#E2E8F0" BorderBrush="#334155" Padding="10,6"
+                        ToolTip.Tip="Adjust Text and Interface Scaling (Ctrl++/Ctrl+-/Ctrl+0)">
+                    <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                        <TextBlock Text="Aa" FontWeight="Bold" FontSize="12" Foreground="#38BDF8" VerticalAlignment="Center"/>
+                        <TextBlock Text="{Binding TextScalePercentageText}" VerticalAlignment="Center" FontSize="11" Foreground="#94A3B8"/>
+                    </StackPanel>
+                    <Button.Flyout>
+                        <Flyout Placement="BottomEdgeAlignedRight">
+                            <Border Background="#0F172A" BorderBrush="#1E293B" BorderThickness="1" CornerRadius="8" Padding="16" Width="280">
+                                <StackPanel Spacing="12">
+                                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                        <TextBlock Text="ACCESSIBILITY" FontSize="14" FontWeight="Bold" Foreground="#38BDF8"/>
+                                        <Border Background="#1E293B" CornerRadius="4" Padding="4,1" VerticalAlignment="Center">
+                                            <TextBlock Text="Display" FontSize="9" FontWeight="Bold" Foreground="#A78BFA"/>
+                                        </Border>
+                                    </StackPanel>
+                                    <TextBlock Text="Adjust text and interface scaling for enhanced readability."
+                                               FontSize="11" Foreground="#94A3B8" TextWrapping="Wrap"/>
+                                    <Separator Background="#1E293B" Height="1"/>
+                                    <Grid ColumnDefinitions="Auto,*,Auto" VerticalAlignment="Center">
+                                        <Button Grid.Column="0" Content="A−" Command="{Binding DecreaseTextScaleCommand}"
+                                                IsEnabled="{Binding CanDecreaseScale}"
+                                                AutomationProperties.Name="Decrease text scaling"
+                                                Background="#1E293B" Foreground="#E2E8F0" BorderBrush="#334155" Padding="12,5" FontWeight="Bold"/>
+                                        <TextBlock Grid.Column="1" Text="{Binding TextScalePercentageText}"
+                                                   FontWeight="Bold" FontSize="16" Foreground="#F8FAFC"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        <Button Grid.Column="2" Content="A+" Command="{Binding IncreaseTextScaleCommand}"
+                                                IsEnabled="{Binding CanIncreaseScale}"
+                                                AutomationProperties.Name="Increase text scaling"
+                                                Background="#1E293B" Foreground="#E2E8F0" BorderBrush="#334155" Padding="12,5" FontWeight="Bold"/>
+                                    </Grid>
+                                    <UniformGrid Columns="5" Margin="0,4,0,0">
+                                        <Button Content="90%" Command="{Binding SetTextScaleCommand}" CommandParameter="0.90"
+                                                Background="#1E293B" Foreground="#94A3B8" BorderBrush="#334155" Padding="4,4" FontSize="10" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Margin="1"/>
+                                        <Button Content="100%" Command="{Binding SetTextScaleCommand}" CommandParameter="1.00"
+                                                Background="#1E293B" Foreground="#F8FAFC" BorderBrush="#38BDF8" Padding="4,4" FontSize="10" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Margin="1" FontWeight="SemiBold"/>
+                                        <Button Content="110%" Command="{Binding SetTextScaleCommand}" CommandParameter="1.10"
+                                                Background="#1E293B" Foreground="#94A3B8" BorderBrush="#334155" Padding="4,4" FontSize="10" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Margin="1"/>
+                                        <Button Content="125%" Command="{Binding SetTextScaleCommand}" CommandParameter="1.25"
+                                                Background="#1E293B" Foreground="#94A3B8" BorderBrush="#334155" Padding="4,4" FontSize="10" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Margin="1"/>
+                                        <Button Content="150%" Command="{Binding SetTextScaleCommand}" CommandParameter="1.50"
+                                                Background="#1E293B" Foreground="#94A3B8" BorderBrush="#334155" Padding="4,4" FontSize="10" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Margin="1"/>
+                                    </UniformGrid>
+                                    <Button Content="Reset to Default (100%)" Command="{Binding ResetTextScaleCommand}"
+                                            Background="#1E293B" Foreground="#E2E8F0" BorderBrush="#334155"
+                                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Padding="8,5" FontSize="11"/>
+                                    <TextBlock Text="Shortcuts: Ctrl++ / Ctrl+- / Ctrl+0" FontSize="10" Foreground="#64748B" HorizontalAlignment="Center"/>
+                                </StackPanel>
+                            </Border>
+                        </Flyout>
+                    </Button.Flyout>
+                </Button>
+                <Button AutomationProperties.Name="About ParityProof and Build Information"
+                        Background="#1E293B" Foreground="#E2E8F0" BorderBrush="#334155" Padding="12,6">
+                    <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                        <PathIcon Data="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-5h2v-4h-2v4zm0-6h2V7h-2v2z"
+                                  Width="13" Height="13" Foreground="#38BDF8" VerticalAlignment="Center"/>
+                        <TextBlock Text="About" VerticalAlignment="Center"/>
+                    </StackPanel>
                     <Button.Flyout>
                         <Flyout Placement="BottomEdgeAlignedRight">
                             <Border Background="#0F172A" BorderBrush="#1E293B" BorderThickness="1" CornerRadius="8" Padding="16" Width="300">
@@ -1131,4 +1199,5 @@
             </Border>
         </Grid>
     </Grid>
+    </LayoutTransformControl>
 </Window>

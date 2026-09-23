@@ -60,6 +60,48 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     public string BuildSemVer => BuildInfo.Current.SemVer;
     public string BuildConfiguration => BuildInfo.Current.IsDebug ? "Debug" : "Release";
 
+    public const double MIN_TEXT_SCALE = 0.85;
+    public const double MAX_TEXT_SCALE = 1.60;
+    public const double DEFAULT_TEXT_SCALE = 1.0;
+    public const double TEXT_SCALE_STEP = 0.10;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(TextScalePercentageText))]
+    [NotifyPropertyChangedFor(nameof(CanIncreaseScale))]
+    [NotifyPropertyChangedFor(nameof(CanDecreaseScale))]
+    private double _textScale = DEFAULT_TEXT_SCALE;
+
+    public string TextScalePercentageText => $"{Math.Round(TextScale * 100):0}%";
+    public bool CanIncreaseScale => TextScale < MAX_TEXT_SCALE - 0.01;
+    public bool CanDecreaseScale => TextScale > MIN_TEXT_SCALE + 0.01;
+
+    [RelayCommand]
+    public void IncreaseTextScale()
+    {
+        TextScale = Math.Min(MAX_TEXT_SCALE, Math.Round((TextScale + TEXT_SCALE_STEP) * 100.0) / 100.0);
+    }
+
+    [RelayCommand]
+    public void DecreaseTextScale()
+    {
+        TextScale = Math.Max(MIN_TEXT_SCALE, Math.Round((TextScale - TEXT_SCALE_STEP) * 100.0) / 100.0);
+    }
+
+    [RelayCommand]
+    public void ResetTextScale()
+    {
+        TextScale = DEFAULT_TEXT_SCALE;
+    }
+
+    [RelayCommand]
+    public void SetTextScale(string scaleString)
+    {
+        if (double.TryParse(scaleString, System.Globalization.CultureInfo.InvariantCulture, out double parsedScale))
+        {
+            TextScale = Math.Clamp(parsedScale, MIN_TEXT_SCALE, MAX_TEXT_SCALE);
+        }
+    }
+
     [ObservableProperty]
     private string _sourcePath = string.Empty;
 
@@ -166,6 +208,8 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
 
     [ObservableProperty]
     private string _throughputText = "0.0 MB/s";
+
+    private readonly EtaSmoother _etaSmoother = new();
 
     [ObservableProperty]
     private string _etaText = "--:--";
@@ -1020,7 +1064,8 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         DestinationVerifySummaryFormatted = "-- / --";
         CurrentFileProgressPercentage = 0;
         ThroughputText = "0.0 MB/s";
-        EtaText = "--:--";
+        _etaSmoother.Reset();
+        EtaText = _etaSmoother.CurrentEtaText;
         FilesCounterText = "0 found";
         CurrentProgressPhase = "Scanning Source Directory...";
         CurrentFileDetailText = "Traversing file tree...";
@@ -1148,14 +1193,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
                     ThroughputText = "-- MB/s";
                 }
 
-                if (p.EstimatedTimeRemaining > TimeSpan.Zero)
-                {
-                    EtaText = $"{p.EstimatedTimeRemaining:mm\\:ss}";
-                }
-                else
-                {
-                    EtaText = "--:--";
-                }
+                EtaText = _etaSmoother.RegisterSample(p.EstimatedTimeRemaining);
             });
 
             // Offload to background thread pool to ensure UI Dispatcher never blocks during I/O
@@ -1316,6 +1354,8 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
             _elapsedTimer.Stop();
             _operationStopwatch.Stop();
             DurationFormatted = $"{_operationStopwatch.Elapsed.TotalSeconds:F1}s";
+            _etaSmoother.Reset();
+            EtaText = _etaSmoother.CurrentEtaText;
             IsRunning = false;
             IsOperationActive = false;
             IsBatchIndeterminate = false;
@@ -1381,7 +1421,8 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         BatchProgressSummaryText = "Scanning destinations...";
         CurrentFileProgressPercentage = 0;
         ThroughputText = "-- MB/s";
-        EtaText = "--:--";
+        _etaSmoother.Reset();
+        EtaText = _etaSmoother.CurrentEtaText;
         FilesCounterText = "0 files";
         CurrentProgressPhase = "Scanning Destination Directories...";
         CurrentFileDetailText = "Traversing destination file trees...";
@@ -1477,14 +1518,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
                     SyncDestinationTelemetries(p.DestinationTelemetries);
                 }
 
-                if (p.EstimatedTimeRemaining > TimeSpan.Zero)
-                {
-                    EtaText = $"{p.EstimatedTimeRemaining:mm\\:ss}";
-                }
-                else
-                {
-                    EtaText = "--:--";
-                }
+                EtaText = _etaSmoother.RegisterSample(p.EstimatedTimeRemaining);
             });
 
             DuplicateAnalysisResult result = await Task.Run(async () =>
@@ -1599,6 +1633,8 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
             _elapsedTimer.Stop();
             _operationStopwatch.Stop();
             DurationFormatted = $"{_operationStopwatch.Elapsed.TotalSeconds:F1}s";
+            _etaSmoother.Reset();
+            EtaText = _etaSmoother.CurrentEtaText;
             IsRunning = false;
             IsOperationActive = false;
             IsBatchIndeterminate = false;
@@ -1699,7 +1735,8 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         DestinationVerifySummaryFormatted = "-- / --";
         CurrentFileProgressPercentage = 0;
         ThroughputText = "0.0 MB/s";
-        EtaText = "--:--";
+        _etaSmoother.Reset();
+        EtaText = _etaSmoother.CurrentEtaText;
         FilesCounterText = $"0 / {missingFiles.Count}";
         CurrentProgressPhase = "Starting copy transfer...";
         CurrentFileDetailText = "Preparing file streams...";
@@ -1771,8 +1808,9 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
                 CopySpeedText = $"{p.MegaBytesPerSecond:F1} MB/s";
                 ThroughputText = CopySpeedText;
 
-                CopyEtaText = $"ETA: {p.EstimatedTimeRemaining:mm\\:ss}";
-                EtaText = $"{p.EstimatedTimeRemaining:mm\\:ss}";
+                string eta = _etaSmoother.RegisterSample(p.EstimatedTimeRemaining);
+                CopyEtaText = $"ETA: {eta}";
+                EtaText = eta;
 
                 if (p.Stages is not null && p.Stages.Count > 0)
                 {
@@ -1833,6 +1871,8 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         {
             _elapsedTimer.Stop();
             _operationStopwatch.Stop();
+            _etaSmoother.Reset();
+            EtaText = _etaSmoother.CurrentEtaText;
             IsCopying = false;
             IsOperationActive = false;
             IsPausing = false;
