@@ -1166,10 +1166,19 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
                 _ => COLOR_UNSAFE
             };
 
+            Dictionary<string, string> destNames = new(StringComparer.OrdinalIgnoreCase);
+            foreach (BackupDestinationViewModel dest in Destinations)
+            {
+                if (!string.IsNullOrWhiteSpace(dest.Id) && !string.IsNullOrWhiteSpace(dest.Name))
+                {
+                    destNames[dest.Id] = dest.Name;
+                }
+            }
+
             List<MediaItemViewModel> newItems = new(results.Count);
             foreach (VerificationResultItem item in results)
             {
-                newItems.Add(new MediaItemViewModel(item));
+                newItems.Add(new MediaItemViewModel(item, destNames));
             }
             AllItems.ReplaceAll(newItems);
 
