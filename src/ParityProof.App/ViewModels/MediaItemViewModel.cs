@@ -91,7 +91,7 @@ public sealed class DestinationComparisonViewModel
     private readonly List<HashComparisonRowViewModel> _rows = new();
 
     public string DestinationId { get; }
-    public string DestinationName => DestinationId;
+    public string DestinationName { get; }
     public MediaStatus Status { get; }
     public string StatusText { get; }
     public string StatusBadgeColor { get; }
@@ -108,9 +108,15 @@ public sealed class DestinationComparisonViewModel
 
     public IReadOnlyList<HashComparisonRowViewModel> Rows => _rows;
 
-    public DestinationComparisonViewModel(FileMatchStatus matchStatus, MediaFile sourceFile)
+    public DestinationComparisonViewModel(
+        FileMatchStatus matchStatus,
+        MediaFile sourceFile,
+        string? destinationName = null)
     {
         DestinationId = matchStatus.DestinationId;
+        DestinationName = !string.IsNullOrWhiteSpace(destinationName)
+            ? destinationName
+            : matchStatus.DestinationId;
         Status = matchStatus.Status;
         MatchedFilePath = matchStatus.MatchedFilePath;
         FailureReason = matchStatus.FailureReason;
@@ -258,9 +264,9 @@ public sealed partial class MediaItemViewModel : ViewModelBase
         get
         {
             List<string> parts = new();
-            foreach (KeyValuePair<string, FileMatchStatus> kvp in Item.DestinationStatuses)
+            foreach (DestinationComparisonViewModel comp in _destinationComparisons)
             {
-                parts.Add($"{kvp.Key}: {kvp.Value.Status}");
+                parts.Add($"{comp.DestinationName}: {comp.Status}");
             }
             return string.Join(" | ", parts);
         }
@@ -282,12 +288,16 @@ public sealed partial class MediaItemViewModel : ViewModelBase
     public IReadOnlyList<DestinationComparisonViewModel> DestinationComparisons => _destinationComparisons;
     public bool HasDestinations => _destinationComparisons.Count > 0;
 
-    public MediaItemViewModel(VerificationResultItem item)
+    public MediaItemViewModel(
+        VerificationResultItem item,
+        IReadOnlyDictionary<string, string>? destinationNames = null)
     {
         Item = item;
         foreach (KeyValuePair<string, FileMatchStatus> kvp in item.DestinationStatuses)
         {
-            _destinationComparisons.Add(new DestinationComparisonViewModel(kvp.Value, item.SourceFile));
+            string? destName = null;
+            destinationNames?.TryGetValue(kvp.Key, out destName);
+            _destinationComparisons.Add(new DestinationComparisonViewModel(kvp.Value, item.SourceFile, destName));
         }
     }
 }

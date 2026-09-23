@@ -22,6 +22,7 @@ public sealed class MediaCopier : IMediaCopier
 {
     private const int COPY_BUFFER_SIZE = 2 * 1024 * 1024; // 2 MB streaming buffer
     private const int HEAD_TAIL_CHUNK_SIZE = 64 * 1024; // 64 KB head/tail boundary chunk
+    private const int PAGE_CACHE_EVICTION_INTERVAL_BYTES = 16 * 1024 * 1024; // 16 MB kernel page cache boundary
     private const string TEMP_FILE_EXTENSION = ".parityproof.tmp";
 
     public Task<int> CopyMissingFilesAsync(
@@ -181,6 +182,7 @@ public sealed class MediaCopier : IMediaCopier
                 ulong inFlightTailHash = 0;
                 bool headHashCaptured = false;
                 int tailBufferCount = 0;
+                int bytesSinceEviction = 0;
 
                 try
                 {
@@ -261,6 +263,17 @@ public sealed class MediaCopier : IMediaCopier
                                     await Task.WhenAll(writeTasks).ConfigureAwait(false);
                                 }
 
+                                bytesSinceEviction += bytesRead;
+                                if (bytesSinceEviction >= PAGE_CACHE_EVICTION_INTERVAL_BYTES)
+                                {
+                                    long evictOffset = fileCopiedBytes - bytesSinceEviction;
+                                    for (int i = 0; i < destStreams.Count; i++)
+                                    {
+                                        NativeDirectIO.EvictPageCache(destStreams[i].SafeFileHandle, evictOffset, bytesSinceEviction);
+                                    }
+                                    bytesSinceEviction = 0;
+                                }
+
                                 totalCopiedBytes += bytesRead;
                                 fileCopiedBytes += bytesRead;
 
@@ -327,6 +340,7 @@ public sealed class MediaCopier : IMediaCopier
                             foreach (FileStream destStream in destStreams)
                             {
                                 await destStream.FlushAsync(cancellationToken).ConfigureAwait(false);
+                                NativeDirectIO.EvictPageCache(destStream.SafeFileHandle, 0, 0);
                             }
                         }
                         finally

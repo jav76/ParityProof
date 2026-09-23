@@ -57,17 +57,26 @@ public static class AppLogger
 
         if (options.EnableSqlite)
         {
-            string dbPath = options.SqliteDbPath ?? LoggingOptions.GetDefaultSqliteDbPath();
-            string? dir = Path.GetDirectoryName(dbPath);
-            if (!string.IsNullOrWhiteSpace(dir))
+            try
             {
-                Directory.CreateDirectory(dir);
-            }
+                SQLitePCL.Batteries_V2.Init();
 
-            config.WriteTo.SQLite(
-                sqliteDbPath: dbPath,
-                tableName: SQLITE_TABLE_NAME,
-                restrictedToMinimumLevel: options.MinimumLevel);
+                string dbPath = options.SqliteDbPath ?? LoggingOptions.GetDefaultSqliteDbPath();
+                string? dir = Path.GetDirectoryName(dbPath);
+                if (!string.IsNullOrWhiteSpace(dir))
+                {
+                    Directory.CreateDirectory(dir);
+                }
+
+                config.WriteTo.SQLite(
+                    sqliteDbPath: dbPath,
+                    tableName: SQLITE_TABLE_NAME,
+                    restrictedToMinimumLevel: options.MinimumLevel);
+            }
+            catch
+            {
+                // SQLite sink failure must not crash application startup; fallback to console and file sinks
+            }
         }
 
         if (options.EnableEventLog && OperatingSystem.IsWindows())
