@@ -29,7 +29,44 @@ jobs:
         run: dotnet build ParityProof.slnx --configuration Release --no-restore
 
       - name: Execute unit test suite
-        run: dotnet test ParityProof.slnx --configuration Release --no-build --verbosity normal --collect:"XPlat Code Coverage"
+        run: |
+          dotnet test ParityProof.slnx \
+            --configuration Release \
+            --no-build \
+            --verbosity normal \
+            --collect:"XPlat Code Coverage" \
+            --results-directory ./TestResults \
+            --logger "trx;LogFileName=test-results.trx" \
+            --logger "GitHubActions"
+
+      - name: Generate Code Coverage Report
+        if: always()
+        uses: danielpalme/ReportGenerator-GitHub-Action@v5
+        with:
+          reports: './TestResults/**/coverage.cobertura.xml'
+          targetdir: './coverage-report'
+          reporttypes: 'MarkdownSummaryGithub;HtmlInline'
+
+      - name: Publish Code Coverage to Job Summary
+        if: always()
+        run: |
+          if [ -f "./coverage-report/SummaryGithub.md" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "## 📊 Code Coverage Report" >> $GITHUB_STEP_SUMMARY
+            cat ./coverage-report/SummaryGithub.md >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload Test & Coverage Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-and-coverage-results
+          path: |
+            ./TestResults/**/*.trx
+            ./TestResults/**/coverage.cobertura.xml
+            ./coverage-report
+          if-no-files-found: ignore
+          retention-days: 7
 
   check-format:
     name: Verify Code Formatting
@@ -44,7 +81,20 @@ jobs:
           dotnet-version: '10.0.x'
 
       - name: Check code formatting
-        run: dotnet format ParityProof.slnx --verify-no-changes --severity warn
+        run: dotnet format ParityProof.slnx --verify-no-changes --severity warn --report ./format-report.json -v normal
+
+      - name: Generate Code Formatting Report
+        if: always()
+        run: python3 .github/scripts/format-summary.py ./format-report.json
+
+      - name: Upload Formatting Report Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: format-report
+          path: ./format-report.json
+          if-no-files-found: ignore
+          retention-days: 7
 
   cross-platform-build-check:
     name: Build Check (${{ matrix.rid }})

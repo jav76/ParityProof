@@ -218,11 +218,22 @@ jobs:
           echo "=== Computed SHA256 Checksums ==="
           cat ./checksums-sha256.txt
 
+      - name: Generate Release Notes with Download Links
+        run: |
+          python3 .github/scripts/generate-release-notes.py \
+            ./dist \
+            "${{ needs.prepare-release.outputs.tag }}" \
+            "${{ github.repository }}" \
+            ./release-notes.md
+          echo "=== Generated Release Notes Preview ==="
+          cat ./release-notes.md
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.prepare-release.outputs.tag }}
           name: ParityProof ${{ needs.prepare-release.outputs.tag }}
+          body_path: ./release-notes.md
           prerelease: ${{ needs.prepare-release.outputs.is_prerelease == 'true' }}
           generate_release_notes: true
           files: ./dist/*
