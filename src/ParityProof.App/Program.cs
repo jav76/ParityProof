@@ -14,12 +14,35 @@ internal sealed class Program
         AppLogger.Initialize(options);
 
         AppLogger.Logger.Information(
-            "{ApplicationVersion} starting up (Commit: {CommitSha}). MinimumLevel: {MinimumLevel}, FileLogging: {FileEnabled}, SqliteLogging: {SqliteEnabled}",
+            "{ApplicationVersion} starting up (Commit: {CommitSha}). MinimumLevel: {MinimumLevel}, FileLogging: {FileEnabled}, SqliteLogging: {SqliteEnabled}, EventLog: {EventLogEnabled}",
             BuildInfo.Current.DisplayVersion,
             BuildInfo.Current.CommitSha,
             options.MinimumLevel,
             options.EnableFile,
-            options.EnableSqlite);
+            options.EnableSqlite,
+            options.EnableEventLog);
+
+        AppDomain.CurrentDomain.UnhandledException += (sender, eventArgs) =>
+        {
+            if (eventArgs.ExceptionObject is Exception ex)
+            {
+                AppLogger.Logger.Fatal(ex, "Unhandled AppDomain exception occurred. Process terminating: {IsTerminating}", eventArgs.IsTerminating);
+            }
+            else
+            {
+                AppLogger.Logger.Fatal(
+                    "Unhandled AppDomain exception of non-Exception type: {ExceptionObject}. Process terminating: {IsTerminating}",
+                    eventArgs.ExceptionObject,
+                    eventArgs.IsTerminating);
+            }
+
+            AppLogger.CloseAndFlush();
+        };
+
+        System.Threading.Tasks.TaskScheduler.UnobservedTaskException += (sender, eventArgs) =>
+        {
+            AppLogger.Logger.Error(eventArgs.Exception, "Unobserved background task exception encountered");
+        };
 
         try
         {
