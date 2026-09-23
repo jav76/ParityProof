@@ -10,12 +10,17 @@ public sealed class LoggingOptions
     private const string DEFAULT_LOG_SUBFOLDER = "logs";
     private const string DEFAULT_LOG_FILENAME = "parityproof-.log";
     private const string DEFAULT_DB_FILENAME = "logs.db";
+    private const string DEFAULT_EVENT_LOG_SOURCE = "ParityProof";
+    private const string DEFAULT_EVENT_LOG_NAME = "Application";
 
 #if DEBUG
     public const LogEventLevel DEFAULT_LOG_LEVEL = LogEventLevel.Debug;
+    public const StackTracePolicy DEFAULT_EVENT_LOG_STACK_TRACE_POLICY = StackTracePolicy.Full;
 #else
     public const LogEventLevel DEFAULT_LOG_LEVEL = LogEventLevel.Warning;
+    public const StackTracePolicy DEFAULT_EVENT_LOG_STACK_TRACE_POLICY = StackTracePolicy.Sanitized;
 #endif
+    public const LogEventLevel DEFAULT_EVENT_LOG_LEVEL = LogEventLevel.Warning;
 
     public LogEventLevel MinimumLevel { get; set; } = DEFAULT_LOG_LEVEL;
 
@@ -28,6 +33,16 @@ public sealed class LoggingOptions
     public string? SqliteDbPath { get; set; }
 
     public bool EnableConsole { get; set; } = true;
+
+    public bool EnableEventLog { get; set; } = true;
+
+    public string EventLogSource { get; set; } = DEFAULT_EVENT_LOG_SOURCE;
+
+    public string EventLogName { get; set; } = DEFAULT_EVENT_LOG_NAME;
+
+    public LogEventLevel EventLogMinimumLevel { get; set; } = DEFAULT_EVENT_LOG_LEVEL;
+
+    public StackTracePolicy EventLogStackTracePolicy { get; set; } = DEFAULT_EVENT_LOG_STACK_TRACE_POLICY;
 
     public static string GetDefaultLogDirectory()
     {
@@ -112,6 +127,58 @@ public sealed class LoggingOptions
                 options.EnableSqlite = true;
                 continue;
             }
+
+            if (arg.Equals("--no-log-eventlog", StringComparison.OrdinalIgnoreCase))
+            {
+                options.EnableEventLog = false;
+                continue;
+            }
+
+            if (arg.Equals("--log-eventlog", StringComparison.OrdinalIgnoreCase))
+            {
+                options.EnableEventLog = true;
+                continue;
+            }
+
+            if (TryParseOption(arg, "--event-log-source", null, args, ref i, out string? eventSource))
+            {
+                if (!string.IsNullOrWhiteSpace(eventSource))
+                {
+                    options.EventLogSource = eventSource;
+                    options.EnableEventLog = true;
+                }
+                continue;
+            }
+
+            if (TryParseOption(arg, "--event-log-name", null, args, ref i, out string? eventLogName))
+            {
+                if (!string.IsNullOrWhiteSpace(eventLogName))
+                {
+                    options.EventLogName = eventLogName;
+                    options.EnableEventLog = true;
+                }
+                continue;
+            }
+
+            if (TryParseOption(arg, "--event-log-level", null, args, ref i, out string? eventLogLevelString))
+            {
+                if (TryParseLogLevel(eventLogLevelString, out LogEventLevel parsedEventLevel))
+                {
+                    options.EventLogMinimumLevel = parsedEventLevel;
+                    options.EnableEventLog = true;
+                }
+                continue;
+            }
+
+            if (TryParseOption(arg, "--event-log-stack-trace", null, args, ref i, out string? stackTracePolicyString))
+            {
+                if (TryParseStackTracePolicy(stackTracePolicyString, out StackTracePolicy parsedPolicy))
+                {
+                    options.EventLogStackTracePolicy = parsedPolicy;
+                    options.EnableEventLog = true;
+                }
+                continue;
+            }
         }
 
         return options;
@@ -190,6 +257,41 @@ public sealed class LoggingOptions
             case "fatal":
             case "critical":
                 level = LogEventLevel.Fatal;
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
+    public static bool TryParseStackTracePolicy(string? value, out StackTracePolicy policy)
+    {
+        policy = DEFAULT_EVENT_LOG_STACK_TRACE_POLICY;
+
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        switch (value.Trim().ToLowerInvariant())
+        {
+            case "sanitized":
+            case "sanitize":
+            case "masked":
+                policy = StackTracePolicy.Sanitized;
+                return true;
+
+            case "full":
+            case "raw":
+            case "all":
+                policy = StackTracePolicy.Full;
+                return true;
+
+            case "none":
+            case "omit":
+            case "disabled":
+            case "off":
+                policy = StackTracePolicy.None;
                 return true;
 
             default:
