@@ -96,7 +96,12 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanStartOperation))]
     [NotifyPropertyChangedFor(nameof(CanStartCopy))]
+    [NotifyPropertyChangedFor(nameof(CancelConfirmationMessage))]
     private bool _isCopying;
+
+    public string CancelConfirmationMessage => IsCopying
+        ? "Any partial file transfer will be safely removed."
+        : "Verification progress will stop immediately.";
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanStartOperation))]
@@ -975,11 +980,17 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         PauseResumeButtonBackground = "#D97706";
         BatchProgressPercentage = 0;
         BatchProgressSummaryText = "Scanning directory...";
-        PipelineStages.Clear();
+        lock (PipelineStages)
+        {
+            PipelineStages.Clear();
+        }
         OnPropertyChanged(nameof(HasPipelineStages));
         HasSourceTelemetry = false;
         HasDestinationTelemetries = false;
-        DestinationTelemetries.Clear();
+        lock (DestinationTelemetries)
+        {
+            DestinationTelemetries.Clear();
+        }
         DestinationCombinedSpeed = 0;
         DestinationCombinedSpeedFormatted = "-- MB/s";
         DestinationCombinedPercentage = 0;
@@ -1605,11 +1616,17 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         PauseResumeButtonBackground = "#D97706";
         BatchProgressPercentage = 0;
         BatchProgressSummaryText = "0% (0 / 0)";
-        PipelineStages.Clear();
+        lock (PipelineStages)
+        {
+            PipelineStages.Clear();
+        }
         OnPropertyChanged(nameof(HasPipelineStages));
         HasSourceTelemetry = false;
         HasDestinationTelemetries = false;
-        DestinationTelemetries.Clear();
+        lock (DestinationTelemetries)
+        {
+            DestinationTelemetries.Clear();
+        }
         DestinationCombinedSpeed = 0;
         DestinationCombinedSpeedFormatted = "-- MB/s";
         DestinationCombinedPercentage = 0;
@@ -1875,43 +1892,46 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
 
     private void UpdatePipelineStages(IReadOnlyList<StageProgressInfo> stageInfos)
     {
-        Dictionary<PipelineStageId, StageProgressInfo> incoming = new(stageInfos.Count);
-        foreach (StageProgressInfo info in stageInfos)
+        lock (PipelineStages)
         {
-            incoming[info.Id] = info;
-        }
-
-        for (int i = PipelineStages.Count - 1; i >= 0; i--)
-        {
-            if (!incoming.ContainsKey(PipelineStages[i].StageId))
+            Dictionary<PipelineStageId, StageProgressInfo> incoming = new(stageInfos.Count);
+            foreach (StageProgressInfo info in stageInfos)
             {
-                PipelineStages.RemoveAt(i);
+                incoming[info.Id] = info;
             }
-        }
 
-        foreach (StageProgressInfo info in stageInfos)
-        {
-            StageProgressViewModel? existing = null;
-            foreach (StageProgressViewModel vm in PipelineStages)
+            for (int i = PipelineStages.Count - 1; i >= 0; i--)
             {
-                if (vm.StageId == info.Id)
+                if (i < PipelineStages.Count && !incoming.ContainsKey(PipelineStages[i].StageId))
                 {
-                    existing = vm;
-                    break;
+                    PipelineStages.RemoveAt(i);
                 }
             }
 
-            if (existing is not null)
+            foreach (StageProgressInfo info in stageInfos)
             {
-                existing.UpdateFrom(info);
-            }
-            else
-            {
-                PipelineStages.Add(new StageProgressViewModel(info));
-            }
-        }
+                StageProgressViewModel? existing = null;
+                foreach (StageProgressViewModel vm in PipelineStages)
+                {
+                    if (vm.StageId == info.Id)
+                    {
+                        existing = vm;
+                        break;
+                    }
+                }
 
-        OnPropertyChanged(nameof(HasPipelineStages));
+                if (existing is not null)
+                {
+                    existing.UpdateFrom(info);
+                }
+                else
+                {
+                    PipelineStages.Add(new StageProgressViewModel(info));
+                }
+            }
+
+            OnPropertyChanged(nameof(HasPipelineStages));
+        }
     }
 
     private void SyncDestinationTelemetries(IReadOnlyList<DestinationTelemetryInfo> incoming)
@@ -1970,37 +1990,40 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
             ? $"{totalVerifiedFiles:N0} / {totalTargetFiles:N0} ({maxPct:F0}%)"
             : "-- / --";
 
-        for (int i = DestinationTelemetries.Count - 1; i >= 0; i--)
+        lock (DestinationTelemetries)
         {
-            if (!incomingMap.ContainsKey(DestinationTelemetries[i].DestinationId))
+            for (int i = DestinationTelemetries.Count - 1; i >= 0; i--)
             {
-                DestinationTelemetries.RemoveAt(i);
-            }
-        }
-
-        foreach (DestinationTelemetryInfo info in incoming)
-        {
-            DestinationTelemetryViewModel? existing = null;
-            foreach (DestinationTelemetryViewModel vm in DestinationTelemetries)
-            {
-                if (vm.DestinationId == info.DestinationId)
+                if (i < DestinationTelemetries.Count && !incomingMap.ContainsKey(DestinationTelemetries[i].DestinationId))
                 {
-                    existing = vm;
-                    break;
+                    DestinationTelemetries.RemoveAt(i);
                 }
             }
 
-            if (existing is not null)
+            foreach (DestinationTelemetryInfo info in incoming)
             {
-                existing.UpdateFrom(info);
-            }
-            else
-            {
-                DestinationTelemetries.Add(new DestinationTelemetryViewModel(info));
-            }
-        }
+                DestinationTelemetryViewModel? existing = null;
+                foreach (DestinationTelemetryViewModel vm in DestinationTelemetries)
+                {
+                    if (vm.DestinationId == info.DestinationId)
+                    {
+                        existing = vm;
+                        break;
+                    }
+                }
 
-        HasDestinationTelemetries = DestinationTelemetries.Count > 0;
+                if (existing is not null)
+                {
+                    existing.UpdateFrom(info);
+                }
+                else
+                {
+                    DestinationTelemetries.Add(new DestinationTelemetryViewModel(info));
+                }
+            }
+
+            HasDestinationTelemetries = DestinationTelemetries.Count > 0;
+        }
     }
 
     public void Dispose()
