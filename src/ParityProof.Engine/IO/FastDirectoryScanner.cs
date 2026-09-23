@@ -46,8 +46,51 @@ public static class FastDirectoryScanner
         "$recycle.bin", "system volume information", ".trashes", ".fseventsd",
         ".spotlight-v100", ".git", ".github", "node_modules", ".cache",
         "#recycle", "@eadir", "appdata", ".thumbnails", ".trash", "__pycache__",
-        ".zfs", "#snapshot", ".snapshots", ".recycle", "@recycle"
+        ".zfs", "#snapshot", ".snapshots", ".recycle", "@recycle",
+        ".temporaryitems", ".documentrevisions-v100"
     };
+
+    private static readonly string[] IgnoredDirectorySuffixes =
+    {
+        ".lrdata",
+        ".photoslibrary",
+        ".photolibrary",
+        ".aplibrary",
+        ".copkg"
+    };
+
+    public static bool IsIgnoredDirectory(string dirName)
+    {
+        if (string.IsNullOrWhiteSpace(dirName))
+        {
+            return true;
+        }
+
+        return IsIgnoredDirectory(dirName.AsSpan());
+    }
+
+    public static bool IsIgnoredDirectory(ReadOnlySpan<char> dirName)
+    {
+        if (dirName.IsEmpty || dirName.IsWhiteSpace())
+        {
+            return true;
+        }
+
+        if (dirName.StartsWith(".trash-", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        foreach (string suffix in IgnoredDirectorySuffixes)
+        {
+            if (dirName.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return IgnoredDirectories.GetAlternateLookup<ReadOnlySpan<char>>().Contains(dirName);
+    }
 
     public static MediaCategory CategorizeExtension(string extension)
     {
@@ -317,9 +360,7 @@ public static class FastDirectoryScanner
                                             return false;
                                         }
 
-                                        string dirName = entry.FileName.ToString();
-                                        if (!IgnoredDirectories.Contains(dirName) &&
-                                            !dirName.StartsWith(".trash-", StringComparison.OrdinalIgnoreCase))
+                                        if (!IsIgnoredDirectory(entry.FileName))
                                         {
                                             string subDirPath = entry.ToFullPath();
                                             string canonicalSubDir = Path.GetFullPath(subDirPath).TrimEnd(
