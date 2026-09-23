@@ -46,6 +46,8 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     private readonly IDuplicateAnalyzer _duplicateAnalyzer;
     private readonly Stopwatch _operationStopwatch = new();
     private readonly DispatcherTimer _elapsedTimer;
+    private readonly object _pipelineStagesLock = new();
+    private readonly object _destinationTelemetriesLock = new();
 
     private CancellationTokenSource? _cts;
     private PauseTokenSource? _pauseTokenSource;
@@ -96,7 +98,12 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanStartOperation))]
     [NotifyPropertyChangedFor(nameof(CanStartCopy))]
+    [NotifyPropertyChangedFor(nameof(CancelConfirmationMessage))]
     private bool _isCopying;
+
+    public string CancelConfirmationMessage => IsCopying
+        ? "Any partial file transfer will be safely removed."
+        : "Verification progress will stop immediately.";
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanStartOperation))]
@@ -884,6 +891,14 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
             StateBadgeText = "RUNNING";
             StateBadgeBackground = "#064E3B";
             StateBadgeForeground = "#10B981";
+            SafetyBadgeText = OperationTitle switch
+            {
+                "MEDIA VERIFICATION" => "VERIFICATION IN PROGRESS",
+                "DUPLICATE STORAGE AUDIT" => "DUPLICATE AUDIT IN PROGRESS",
+                "BACKUP COPY TRANSFER" => "BACKUP COPY IN PROGRESS",
+                _ => "IN PROGRESS"
+            };
+            SafetyBadgeColor = "#0284C7";
             StatusMessage = "Operation resumed.";
             _operationStopwatch.Start();
             _pauseTokenSource.Resume();
@@ -910,6 +925,8 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         StateBadgeText = "CANCELLING...";
         StateBadgeBackground = "#7F1D1D";
         StateBadgeForeground = "#F87171";
+        SafetyBadgeText = "CANCELLING...";
+        SafetyBadgeColor = "#7F1D1D";
         StatusMessage = "Cancelling operation and cleaning up...";
 
         _pauseTokenSource?.Resume();
@@ -971,15 +988,24 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         StateBadgeText = "RUNNING";
         StateBadgeBackground = "#064E3B";
         StateBadgeForeground = "#10B981";
+        SafetyBadgeText = "VERIFICATION IN PROGRESS";
+        SafetyBadgeColor = "#0284C7";
+        StatusMessage = "Scanning source and destination directories...";
         PauseResumeButtonText = "⏸ PAUSE";
         PauseResumeButtonBackground = "#D97706";
         BatchProgressPercentage = 0;
         BatchProgressSummaryText = "Scanning directory...";
-        PipelineStages.Clear();
+        lock (_pipelineStagesLock)
+        {
+            PipelineStages.Clear();
+        }
         OnPropertyChanged(nameof(HasPipelineStages));
         HasSourceTelemetry = false;
         HasDestinationTelemetries = false;
-        DestinationTelemetries.Clear();
+        lock (_destinationTelemetriesLock)
+        {
+            DestinationTelemetries.Clear();
+        }
         DestinationCombinedSpeed = 0;
         DestinationCombinedSpeedFormatted = "-- MB/s";
         DestinationCombinedPercentage = 0;
@@ -1025,6 +1051,8 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
                     StateBadgeText = "PAUSED";
                     StateBadgeBackground = "#78350F";
                     StateBadgeForeground = "#FBBF24";
+                    SafetyBadgeText = "VERIFICATION PAUSED";
+                    SafetyBadgeColor = "#D97706";
                     StatusMessage = "Operation paused.";
                 }
                 else if (!IsPausing && !IsCancelling)
@@ -1032,6 +1060,9 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
                     StateBadgeText = "RUNNING";
                     StateBadgeBackground = "#064E3B";
                     StateBadgeForeground = "#10B981";
+                    SafetyBadgeText = "VERIFICATION IN PROGRESS";
+                    SafetyBadgeColor = "#0284C7";
+                    StatusMessage = p.Phase;
                 }
 
                 if (p.TotalFiles > 0)
@@ -1166,10 +1197,19 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
                 _ => COLOR_UNSAFE
             };
 
+            Dictionary<string, string> destNames = new(StringComparer.OrdinalIgnoreCase);
+            foreach (BackupDestinationViewModel dest in Destinations)
+            {
+                if (!string.IsNullOrWhiteSpace(dest.Id) && !string.IsNullOrWhiteSpace(dest.Name))
+                {
+                    destNames[dest.Id] = dest.Name;
+                }
+            }
+
             List<MediaItemViewModel> newItems = new(results.Count);
             foreach (VerificationResultItem item in results)
             {
-                newItems.Add(new MediaItemViewModel(item));
+                newItems.Add(new MediaItemViewModel(item, destNames));
             }
             AllItems.ReplaceAll(newItems);
 
@@ -1243,6 +1283,8 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         catch (OperationCanceledException)
         {
             _logger.Information("Verification cancelled by user for source {SourcePath}", SourcePath);
+            SafetyBadgeText = "VERIFICATION CANCELLED";
+            SafetyBadgeColor = "#7F1D1D";
             StatusMessage = "Verification cancelled by user.";
             CurrentProgressPhase = "Cancelled.";
             StateBadgeText = "CANCELLED";
@@ -1256,6 +1298,8 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
                 "Verification failed for source {SourcePath} across {DestCount} destinations",
                 SourcePath,
                 Destinations.Count);
+            SafetyBadgeText = "VERIFICATION FAILED";
+            SafetyBadgeColor = "#7F1D1D";
             StatusMessage = $"Error: {ex.Message}";
             StateBadgeText = "ERROR";
             StateBadgeBackground = "#7F1D1D";
@@ -1322,6 +1366,9 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         StateBadgeText = "SCANNING";
         StateBadgeBackground = "#78350F";
         StateBadgeForeground = "#FBBF24";
+        SafetyBadgeText = "DUPLICATE AUDIT IN PROGRESS";
+        SafetyBadgeColor = "#D97706";
+        StatusMessage = "Scanning destination directories for duplicate media...";
         PauseResumeButtonText = "⏸ PAUSE";
         PauseResumeButtonBackground = "#D97706";
         BatchProgressPercentage = 0;
@@ -1348,6 +1395,19 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
             Progress<VerificationProgress> progress = new(p =>
             {
                 CurrentProgressPhase = p.Phase;
+                if (p.IsPaused)
+                {
+                    SafetyBadgeText = "DUPLICATE AUDIT PAUSED";
+                    SafetyBadgeColor = "#D97706";
+                    StatusMessage = "Operation paused.";
+                }
+                else if (!IsPausing && !IsCancelling)
+                {
+                    SafetyBadgeText = "DUPLICATE AUDIT IN PROGRESS";
+                    SafetyBadgeColor = "#D97706";
+                    StatusMessage = p.Phase;
+                }
+
                 if (!string.IsNullOrEmpty(p.CurrentFile))
                 {
                     CurrentFileDetailText = p.CurrentFile;
@@ -1491,6 +1551,8 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
             ActiveTab = "Duplicates";
             ApplyFilter();
 
+            SafetyBadgeText = "DUPLICATE AUDIT COMPLETE";
+            SafetyBadgeColor = COLOR_SAFE;
             StatusMessage = $"Duplicate scan complete: {result.TotalDuplicateCopies} duplicates found. {ReclaimableSpaceFormatted} reclaimable.";
             StateBadgeText = "FINISHED";
             StateBadgeBackground = "#064E3B";
@@ -1508,6 +1570,8 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         catch (OperationCanceledException)
         {
             _logger.Information("Duplicate scan cancelled by user for source {SourcePath}", SourcePath);
+            SafetyBadgeText = "DUPLICATE AUDIT CANCELLED";
+            SafetyBadgeColor = "#7F1D1D";
             StatusMessage = "Duplicate scan cancelled by user.";
             CurrentProgressPhase = "Cancelled.";
             StateBadgeText = "CANCELLED";
@@ -1517,6 +1581,8 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         catch (Exception ex)
         {
             _logger.Error(ex, "Duplicate scan failed for source {SourcePath}", SourcePath);
+            SafetyBadgeText = "DUPLICATE AUDIT FAILED";
+            SafetyBadgeColor = "#7F1D1D";
             StatusMessage = $"Duplicate scan error: {ex.Message}";
             StateBadgeText = "ERROR";
             StateBadgeBackground = "#7F1D1D";
@@ -1601,15 +1667,24 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         StateBadgeText = "RUNNING";
         StateBadgeBackground = "#064E3B";
         StateBadgeForeground = "#10B981";
+        SafetyBadgeText = "BACKUP COPY IN PROGRESS";
+        SafetyBadgeColor = "#0284C7";
+        StatusMessage = "Transferring missing media files...";
         PauseResumeButtonText = "⏸ PAUSE";
         PauseResumeButtonBackground = "#D97706";
         BatchProgressPercentage = 0;
         BatchProgressSummaryText = "0% (0 / 0)";
-        PipelineStages.Clear();
+        lock (_pipelineStagesLock)
+        {
+            PipelineStages.Clear();
+        }
         OnPropertyChanged(nameof(HasPipelineStages));
         HasSourceTelemetry = false;
         HasDestinationTelemetries = false;
-        DestinationTelemetries.Clear();
+        lock (_destinationTelemetriesLock)
+        {
+            DestinationTelemetries.Clear();
+        }
         DestinationCombinedSpeed = 0;
         DestinationCombinedSpeedFormatted = "-- MB/s";
         DestinationCombinedPercentage = 0;
@@ -1649,6 +1724,8 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
                     StateBadgeText = "PAUSED";
                     StateBadgeBackground = "#78350F";
                     StateBadgeForeground = "#FBBF24";
+                    SafetyBadgeText = "BACKUP COPY PAUSED";
+                    SafetyBadgeColor = "#D97706";
                     StatusMessage = "Copy paused at file boundary.";
                 }
                 else if (!IsPausing && !IsCancelling)
@@ -1656,6 +1733,9 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
                     StateBadgeText = "RUNNING";
                     StateBadgeBackground = "#064E3B";
                     StateBadgeForeground = "#10B981";
+                    SafetyBadgeText = "BACKUP COPY IN PROGRESS";
+                    SafetyBadgeColor = "#0284C7";
+                    StatusMessage = $"Copying ({p.FilesCompleted}/{p.TotalFiles}): {p.CurrentFileName}";
                 }
 
                 CurrentProgressPhase = $"Copying: {p.CurrentFileName}";
@@ -1722,6 +1802,8 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         catch (OperationCanceledException)
         {
             _logger.Information("File copy cancelled by user for {FileCount} missing files", missingFiles.Count);
+            SafetyBadgeText = "BACKUP COPY CANCELLED";
+            SafetyBadgeColor = "#7F1D1D";
             StatusMessage = "File copy cancelled by user.";
             CurrentProgressPhase = "Cancelled.";
             StateBadgeText = "CANCELLED";
@@ -1734,6 +1816,8 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
                 ex,
                 "Failed to copy missing files to destinations: {Destinations}",
                 string.Join(", ", targetPaths));
+            SafetyBadgeText = "BACKUP COPY FAILED";
+            SafetyBadgeColor = "#7F1D1D";
             StatusMessage = $"Copy error: {ex.Message}";
             StateBadgeText = "ERROR";
             StateBadgeBackground = "#7F1D1D";
@@ -1875,43 +1959,46 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
 
     private void UpdatePipelineStages(IReadOnlyList<StageProgressInfo> stageInfos)
     {
-        Dictionary<PipelineStageId, StageProgressInfo> incoming = new(stageInfos.Count);
-        foreach (StageProgressInfo info in stageInfos)
+        lock (_pipelineStagesLock)
         {
-            incoming[info.Id] = info;
-        }
-
-        for (int i = PipelineStages.Count - 1; i >= 0; i--)
-        {
-            if (!incoming.ContainsKey(PipelineStages[i].StageId))
+            Dictionary<PipelineStageId, StageProgressInfo> incoming = new(stageInfos.Count);
+            foreach (StageProgressInfo info in stageInfos)
             {
-                PipelineStages.RemoveAt(i);
+                incoming[info.Id] = info;
             }
-        }
 
-        foreach (StageProgressInfo info in stageInfos)
-        {
-            StageProgressViewModel? existing = null;
-            foreach (StageProgressViewModel vm in PipelineStages)
+            for (int i = PipelineStages.Count - 1; i >= 0; i--)
             {
-                if (vm.StageId == info.Id)
+                if (i < PipelineStages.Count && !incoming.ContainsKey(PipelineStages[i].StageId))
                 {
-                    existing = vm;
-                    break;
+                    PipelineStages.RemoveAt(i);
                 }
             }
 
-            if (existing is not null)
+            foreach (StageProgressInfo info in stageInfos)
             {
-                existing.UpdateFrom(info);
-            }
-            else
-            {
-                PipelineStages.Add(new StageProgressViewModel(info));
-            }
-        }
+                StageProgressViewModel? existing = null;
+                foreach (StageProgressViewModel vm in PipelineStages)
+                {
+                    if (vm.StageId == info.Id)
+                    {
+                        existing = vm;
+                        break;
+                    }
+                }
 
-        OnPropertyChanged(nameof(HasPipelineStages));
+                if (existing is not null)
+                {
+                    existing.UpdateFrom(info);
+                }
+                else
+                {
+                    PipelineStages.Add(new StageProgressViewModel(info));
+                }
+            }
+
+            OnPropertyChanged(nameof(HasPipelineStages));
+        }
     }
 
     private void SyncDestinationTelemetries(IReadOnlyList<DestinationTelemetryInfo> incoming)
@@ -1970,37 +2057,40 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
             ? $"{totalVerifiedFiles:N0} / {totalTargetFiles:N0} ({maxPct:F0}%)"
             : "-- / --";
 
-        for (int i = DestinationTelemetries.Count - 1; i >= 0; i--)
+        lock (_destinationTelemetriesLock)
         {
-            if (!incomingMap.ContainsKey(DestinationTelemetries[i].DestinationId))
+            for (int i = DestinationTelemetries.Count - 1; i >= 0; i--)
             {
-                DestinationTelemetries.RemoveAt(i);
-            }
-        }
-
-        foreach (DestinationTelemetryInfo info in incoming)
-        {
-            DestinationTelemetryViewModel? existing = null;
-            foreach (DestinationTelemetryViewModel vm in DestinationTelemetries)
-            {
-                if (vm.DestinationId == info.DestinationId)
+                if (i < DestinationTelemetries.Count && !incomingMap.ContainsKey(DestinationTelemetries[i].DestinationId))
                 {
-                    existing = vm;
-                    break;
+                    DestinationTelemetries.RemoveAt(i);
                 }
             }
 
-            if (existing is not null)
+            foreach (DestinationTelemetryInfo info in incoming)
             {
-                existing.UpdateFrom(info);
-            }
-            else
-            {
-                DestinationTelemetries.Add(new DestinationTelemetryViewModel(info));
-            }
-        }
+                DestinationTelemetryViewModel? existing = null;
+                foreach (DestinationTelemetryViewModel vm in DestinationTelemetries)
+                {
+                    if (vm.DestinationId == info.DestinationId)
+                    {
+                        existing = vm;
+                        break;
+                    }
+                }
 
-        HasDestinationTelemetries = DestinationTelemetries.Count > 0;
+                if (existing is not null)
+                {
+                    existing.UpdateFrom(info);
+                }
+                else
+                {
+                    DestinationTelemetries.Add(new DestinationTelemetryViewModel(info));
+                }
+            }
+
+            HasDestinationTelemetries = DestinationTelemetries.Count > 0;
+        }
     }
 
     public void Dispose()

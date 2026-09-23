@@ -74,6 +74,84 @@ public sealed class FastDirectoryScannerTests : IDisposable
         Assert.EndsWith("PHOTO1.JPG", files[0].FullPath);
     }
 
+    [Fact]
+    public void ScanDirectory_SkipsNasSnapshotAndTrashDirectories()
+    {
+        string validDir = Path.Combine(_testDir, "ValidMedia");
+        string zfsDir = Path.Combine(_testDir, ".zfs", "snapshot", "hourly.0");
+        string snapDir = Path.Combine(_testDir, "#snapshot", "daily");
+        string trashDir = Path.Combine(_testDir, ".Trash-1000");
+
+        Directory.CreateDirectory(validDir);
+        Directory.CreateDirectory(zfsDir);
+        Directory.CreateDirectory(snapDir);
+        Directory.CreateDirectory(trashDir);
+
+        File.WriteAllBytes(Path.Combine(validDir, "KEEP_ME.JPG"), new byte[100]);
+        File.WriteAllBytes(Path.Combine(zfsDir, "IGNORE_ZFS.JPG"), new byte[100]);
+        File.WriteAllBytes(Path.Combine(snapDir, "IGNORE_SNAP.JPG"), new byte[100]);
+        File.WriteAllBytes(Path.Combine(trashDir, "IGNORE_TRASH.JPG"), new byte[100]);
+
+        IReadOnlyList<MediaFile> files = FastDirectoryScanner.ScanDirectory(
+            _testDir,
+            FilterPreset.PhotosOnly);
+
+        Assert.Single(files);
+        Assert.EndsWith("KEEP_ME.JPG", files[0].FullPath);
+    }
+
+    [Theory]
+    [InlineData("Lightroom Catalog-v13-4 Previews.lrdata", true)]
+    [InlineData("Smart Previews.lrdata", true)]
+    [InlineData("Helper.lrdata", true)]
+    [InlineData("My Photos.photoslibrary", true)]
+    [InlineData("Legacy.photolibrary", true)]
+    [InlineData("OldLibrary.aplibrary", true)]
+    [InlineData("CaptureSession.copkg", true)]
+    [InlineData(".git", true)]
+    [InlineData(".cache", true)]
+    [InlineData("$recycle.bin", true)]
+    [InlineData(".Trash-1000", true)]
+    [InlineData(".TemporaryItems", true)]
+    [InlineData(".DocumentRevisions-V100", true)]
+    [InlineData("DCIM", false)]
+    [InlineData("100EOS", false)]
+    [InlineData("Wedding_Photos", false)]
+    [InlineData("Lightroom Catalogs", false)]
+    public void IsIgnoredDirectory_IdentifiesApplicationPreviewPackagesAndSystemFoldersCorrectly(
+        string directoryName,
+        bool expectedIgnored)
+    {
+        bool isIgnoredString = FastDirectoryScanner.IsIgnoredDirectory(directoryName);
+        bool isIgnoredSpan = FastDirectoryScanner.IsIgnoredDirectory(directoryName.AsSpan());
+
+        Assert.Equal(expectedIgnored, isIgnoredString);
+        Assert.Equal(expectedIgnored, isIgnoredSpan);
+    }
+
+    [Fact]
+    public void ScanDirectory_SkipsLightroomPreviewPackagesAndPhotosLibraries()
+    {
+        string dcimDir = Path.Combine(_testDir, "DCIM", "100EOS");
+        string lrdataDir = Path.Combine(_testDir, "Catalogs", "Lightroom Catalog Previews.lrdata", "0", "001");
+        string photosLibDir = Path.Combine(_testDir, "Pictures", "Apple.photoslibrary", "resources");
+
+        Directory.CreateDirectory(dcimDir);
+        Directory.CreateDirectory(lrdataDir);
+        Directory.CreateDirectory(photosLibDir);
+
+        File.WriteAllBytes(Path.Combine(dcimDir, "ACTUAL_SHOOT.JPG"), new byte[500]);
+        File.WriteAllBytes(Path.Combine(lrdataDir, "CACHED_PREVIEW.JPG"), new byte[200]);
+        File.WriteAllBytes(Path.Combine(photosLibDir, "THUMBNAIL.JPG"), new byte[100]);
+
+        IReadOnlyList<MediaFile> files = FastDirectoryScanner.ScanDirectory(
+            _testDir,
+            FilterPreset.PhotosOnly);
+
+        Assert.Single(files);
+        Assert.EndsWith("ACTUAL_SHOOT.JPG", files[0].FullPath);
+    }
+
     public void Dispose()
     {
         try

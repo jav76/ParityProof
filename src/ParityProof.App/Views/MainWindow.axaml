@@ -186,7 +186,7 @@
                         <Grid ColumnDefinitions="*,Auto,Auto">
                             <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                                 <TextBlock Text="⚠️ Cancel active operation?" FontWeight="Bold" Foreground="#FECDD3" FontSize="12" VerticalAlignment="Center"/>
-                                <TextBlock Text="Any partial file transfer will be safely removed." Foreground="#FDA4AF" FontSize="11" VerticalAlignment="Center"/>
+                                <TextBlock Text="{Binding CancelConfirmationMessage}" Foreground="#FDA4AF" FontSize="11" VerticalAlignment="Center"/>
                             </StackPanel>
                             <Button Grid.Column="1" Content="Yes, Cancel" Command="{Binding ConfirmCancelCommand}"
                                     Background="#EF4444" Foreground="#FFFFFF" FontWeight="Bold" Padding="12,5" FontSize="11" Margin="0,0,8,0"/>
