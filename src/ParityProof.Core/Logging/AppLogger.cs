@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Diagnostics;
 using System.IO;
 using Serilog;
 using Serilog.Core;
@@ -15,6 +16,7 @@ public static class AppLogger
     private const int MAX_COLLECTION_ITEMS = 8;
     private const string SQLITE_TABLE_NAME = "Logs";
     private const int DEFAULT_RETAINED_FILE_COUNT = 14;
+    private const string FALLBACK_EVENT_LOG_SOURCE = "Application";
 
     private static readonly LoggingLevelSwitch _levelSwitch = new();
 
@@ -68,7 +70,43 @@ public static class AppLogger
                 restrictedToMinimumLevel: options.MinimumLevel);
         }
 
+        if (options.EnableEventLog && OperatingSystem.IsWindows())
+        {
+            EventLogMessageFormatter eventLogFormatter = new(options.EventLogStackTracePolicy);
+            string sourceName = ResolveWindowsEventLogSource(options.EventLogSource, options.EventLogName);
+
+            config.WriteTo.EventLog(
+                formatter: eventLogFormatter,
+                source: sourceName,
+                logName: options.EventLogName,
+                manageEventSource: false,
+                restrictedToMinimumLevel: options.EventLogMinimumLevel);
+        }
+
         Log.Logger = config.CreateLogger();
+    }
+
+    private static string ResolveWindowsEventLogSource(string preferredSource, string logName)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return preferredSource;
+        }
+
+        try
+        {
+            if (EventLog.SourceExists(preferredSource))
+            {
+                return preferredSource;
+            }
+
+            EventLog.CreateEventSource(preferredSource, logName);
+            return preferredSource;
+        }
+        catch
+        {
+            return FALLBACK_EVENT_LOG_SOURCE;
+        }
     }
 
     public static ILogger ForContext<T>() => Log.ForContext<T>();

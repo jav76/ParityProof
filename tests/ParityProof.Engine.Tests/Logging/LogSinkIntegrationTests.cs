@@ -109,4 +109,36 @@ public sealed class LogSinkIntegrationTests : IDisposable
         Assert.Contains(uniqueMessage, renderedMessage);
         Assert.Equal("Warning", level);
     }
+
+    [Fact]
+    public void AppLogger_WithEventLogEnabled_InitializesAndLogsWithoutException()
+    {
+        LoggingOptions options = new()
+        {
+            MinimumLevel = LogEventLevel.Debug,
+            EnableFile = false,
+            EnableSqlite = false,
+            EnableConsole = false,
+            EnableEventLog = true,
+            EventLogMinimumLevel = LogEventLevel.Warning,
+            EventLogStackTracePolicy = StackTracePolicy.Sanitized
+        };
+
+        AppLogger.Initialize(options);
+
+        // Emit logs at multiple levels including an exception
+        AppLogger.Logger.Information("Information message during test");
+        AppLogger.Logger.Warning("Warning message during test");
+        try
+        {
+            throw new InvalidOperationException("Simulated exception during event log integration test");
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Logger.Error(ex, "Error message with exception during test");
+            AppLogger.Logger.Fatal(ex, "Fatal crash message with exception during test");
+        }
+
+        AppLogger.CloseAndFlush();
+    }
 }
