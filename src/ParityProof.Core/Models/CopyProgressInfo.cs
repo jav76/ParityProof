@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace ParityProof.Core.Models;
 
@@ -12,4 +13,7 @@ public sealed record CopyProgressInfo(
     int TotalFiles,
     long CurrentFileBytes = 0,
     long CurrentFileCopiedBytes = 0,
-    bool IsPaused = false);
+    bool IsPaused = false,
+    IReadOnlyList<StageProgressInfo>? Stages = null,
+    SourceTelemetryInfo? SourceTelemetry = null,
+    IReadOnlyList<DestinationTelemetryInfo>? DestinationTelemetries = null);

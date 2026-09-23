@@ -193,32 +193,190 @@
                         </Grid>
                     </Border>
 
-                    <!-- 3. Dual Progress Bars -->
-                    <StackPanel Spacing="8">
-                        <!-- Batch Progress Bar -->
-                        <StackPanel Spacing="3">
-                            <Grid ColumnDefinitions="*,Auto">
-                                <TextBlock Grid.Column="0" Text="Batch Progress" FontSize="11" FontWeight="Bold" Foreground="#94A3B8"/>
-                                <TextBlock Grid.Column="1" Text="{Binding BatchProgressSummaryText}" FontSize="11" FontWeight="SemiBold" Foreground="#F8FAFC"/>
+                    <!-- 3. Encapsulated Concentric Capsule Progress Hub -->
+                    <Border Background="#0C1220"
+                            BorderBrush="#1F2937"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="14,12">
+                        <StackPanel Spacing="10">
+                            <!-- Outer Master Batch Track Header -->
+                            <Grid ColumnDefinitions="Auto,*,Auto">
+                                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                    <Border Background="#1E293B" CornerRadius="4" Padding="6,2">
+                                        <TextBlock Text="BATCH MASTER" FontSize="10" FontWeight="Bold" Foreground="#38BDF8"/>
+                                    </Border>
+                                    <TextBlock Text="{Binding BatchProgressPercentage, StringFormat={}{0:F0}%}"
+                                               FontSize="12" FontWeight="Bold" Foreground="#F8FAFC" VerticalAlignment="Center"/>
+                                </StackPanel>
+                                <TextBlock Grid.Column="2" Text="{Binding BatchProgressSummaryText}"
+                                           FontSize="11" FontWeight="SemiBold" Foreground="#94A3B8" VerticalAlignment="Center"/>
                             </Grid>
-                            <ProgressBar Value="{Binding BatchProgressPercentage}"
-                                         AutomationProperties.Name="Batch Verification Progress"
-                                         IsIndeterminate="{Binding IsBatchIndeterminate}"
-                                         Maximum="100" Height="8" CornerRadius="4"
-                                         Foreground="{Binding OperationAccentColor}" Background="#1E293B"/>
-                        </StackPanel>
 
-                        <!-- Current File Progress Bar -->
-                        <StackPanel Spacing="3">
-                            <Grid ColumnDefinitions="*,Auto">
-                                <TextBlock Grid.Column="0" Text="{Binding CurrentFileLabelText}" FontSize="10" Foreground="#64748B" TextTrimming="CharacterEllipsis"/>
-                                <TextBlock Grid.Column="1" Text="{Binding CurrentFileProgressText}" FontSize="10" Foreground="#94A3B8"/>
+                            <!-- Outer Master Batch Progress Bar -->
+                            <ProgressBar Value="{Binding BatchProgressPercentage}"
+                                         AutomationProperties.Name="Batch Master Progress"
+                                         IsIndeterminate="{Binding IsBatchIndeterminate}"
+                                         Maximum="100" Height="10" CornerRadius="5"
+                                         Foreground="{Binding OperationAccentColor}" Background="#1A2234"/>
+
+                            <!-- Engine Subsections: Visual Representation of Source & Destination Pipelines -->
+                            <Grid ColumnDefinitions="*,12,*">
+                                <!-- LEFT SUBSECTION: SOURCE ENGINE (INGEST & READ) -->
+                                <Border Grid.Column="0"
+                                        Background="#0B132B"
+                                        BorderBrush="#1E293B"
+                                        BorderThickness="1"
+                                        CornerRadius="6"
+                                        Padding="10,8">
+                                    <StackPanel Spacing="6">
+                                        <!-- Source Subsection Header -->
+                                        <Grid ColumnDefinitions="Auto,*,Auto">
+                                            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                                <Border Background="#0284C7" CornerRadius="4" Padding="5,2">
+                                                    <TextBlock Text="SOURCE ENGINE" FontSize="9" FontWeight="Bold" Foreground="#F0F9FF"/>
+                                                </Border>
+                                                <Border Background="{Binding SourceTelemetry.HashStatusBadgeBackground}" CornerRadius="4" Padding="5,2">
+                                                    <TextBlock Text="{Binding SourceTelemetry.HashStatus}" FontSize="9" FontWeight="Bold"
+                                                               Foreground="{Binding SourceTelemetry.HashStatusBadgeForeground}"/>
+                                                </Border>
+                                            </StackPanel>
+                                            <Border Grid.Column="2" Background="#0C4A6E" CornerRadius="4" Padding="6,2">
+                                                <TextBlock Text="{Binding SourceTelemetry.SpeedFormatted}" FontSize="10" FontWeight="Bold"
+                                                           Foreground="#38BDF8"/>
+                                            </Border>
+                                        </Grid>
+
+                                        <!-- Source Subsection Progress Track -->
+                                        <ProgressBar Value="{Binding SourceTelemetry.Percentage}" Maximum="100" Height="6" CornerRadius="3"
+                                                     AutomationProperties.Name="Source Engine Ingest Progress"
+                                                     Background="#162032" Foreground="#38BDF8"
+                                                     IsIndeterminate="{Binding IsBatchIndeterminate}"/>
+
+                                        <!-- Source Detailed Metrics & Status Indicators -->
+                                        <Grid ColumnDefinitions="*,Auto">
+                                            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="4">
+                                                <TextBlock Text="SCAN:" FontSize="9" FontWeight="Bold" Foreground="#64748B"/>
+                                                <TextBlock Text="{Binding SourceTelemetry.ScanSummaryFormatted}" FontSize="9" Foreground="#94A3B8"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4">
+                                                <TextBlock Text="INDEX:" FontSize="9" FontWeight="Bold" Foreground="#64748B"/>
+                                                <TextBlock Text="{Binding SourceTelemetry.IndexStatus}" FontSize="9" FontWeight="SemiBold" Foreground="#38BDF8"/>
+                                            </StackPanel>
+                                        </Grid>
+
+                                        <Grid ColumnDefinitions="*,Auto">
+                                            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="4">
+                                                <TextBlock Text="HASH / READ:" FontSize="9" FontWeight="Bold" Foreground="#64748B"/>
+                                                <TextBlock Text="{Binding SourceTelemetry.HashSummaryFormatted}" FontSize="9" Foreground="#CBD5E1"/>
+                                            </StackPanel>
+                                            <TextBlock Grid.Column="1" Text="{Binding SourceTelemetry.Percentage, StringFormat={}{0:F0}%}" FontSize="9" FontWeight="Bold" Foreground="#38BDF8"/>
+                                        </Grid>
+
+                                        <!-- Embedded Active File Micro-Stream Bar -->
+                                        <Border IsVisible="{Binding SourceTelemetry.HasActiveFile}"
+                                                Background="#0F172A" BorderBrush="#1E293B" BorderThickness="1"
+                                                CornerRadius="4" Padding="6,4" Margin="0,2,0,0">
+                                            <StackPanel Spacing="2">
+                                                <Grid ColumnDefinitions="*,Auto">
+                                                    <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="4">
+                                                        <TextBlock Text="↳ STREAMING:" FontSize="8" FontWeight="Bold" Foreground="#F59E0B"/>
+                                                        <TextBlock Text="{Binding CurrentFileLabelText}" FontSize="8" FontWeight="SemiBold"
+                                                                   Foreground="#E2E8F0" TextTrimming="CharacterEllipsis"/>
+                                                    </StackPanel>
+                                                    <TextBlock Grid.Column="1" Text="{Binding CurrentFileProgressText}" FontSize="8"
+                                                               Foreground="#94A3B8"/>
+                                                </Grid>
+                                                <ProgressBar Value="{Binding CurrentFileProgressPercentage}" Maximum="100"
+                                                             Height="3" CornerRadius="1.5"
+                                                             AutomationProperties.Name="Active File Stream Progress"
+                                                             Background="#1E293B" Foreground="#F59E0B"/>
+                                            </StackPanel>
+                                        </Border>
+                                    </StackPanel>
+                                </Border>
+
+                                <!-- RIGHT SUBSECTION: DESTINATION ENGINE (TARGET & VERIFY) -->
+                                <Border Grid.Column="2"
+                                        Background="#061A1C"
+                                        BorderBrush="#132B25"
+                                        BorderThickness="1"
+                                        CornerRadius="6"
+                                        Padding="10,8">
+                                    <StackPanel Spacing="6">
+                                        <!-- Destination Subsection Header -->
+                                        <Grid ColumnDefinitions="Auto,*,Auto">
+                                            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                                <Border Background="#059669" CornerRadius="4" Padding="5,2">
+                                                    <TextBlock Text="DESTINATION ENGINE" FontSize="9" FontWeight="Bold" Foreground="#ECFDF5"/>
+                                                </Border>
+                                                <Border Background="{Binding DestinationCombinedStatusBadgeBackground}" CornerRadius="4" Padding="5,2">
+                                                    <TextBlock Text="{Binding DestinationCombinedStatus}" FontSize="9" FontWeight="Bold"
+                                                               Foreground="{Binding DestinationCombinedStatusBadgeForeground}"/>
+                                                </Border>
+                                            </StackPanel>
+                                            <Border Grid.Column="2" Background="#064E3B" CornerRadius="4" Padding="6,2">
+                                                <TextBlock Text="{Binding DestinationCombinedSpeedFormatted}" FontSize="10" FontWeight="Bold"
+                                                           Foreground="#34D399"/>
+                                            </Border>
+                                        </Grid>
+
+                                        <!-- Destination Subsection Progress Track -->
+                                        <ProgressBar Value="{Binding DestinationCombinedPercentage}" Maximum="100" Height="6" CornerRadius="3"
+                                                     AutomationProperties.Name="Destination Engine Verification Progress"
+                                                     Background="#162032" Foreground="#10B981"
+                                                     IsIndeterminate="{Binding IsBatchIndeterminate}"/>
+
+                                        <!-- Destination Detailed Metrics & Status Indicators -->
+                                        <Grid ColumnDefinitions="*,Auto">
+                                            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="4">
+                                                <TextBlock Text="TARGET SCAN:" FontSize="9" FontWeight="Bold" Foreground="#64748B"/>
+                                                <TextBlock Text="{Binding DestinationScanSummaryFormatted}" FontSize="9" Foreground="#94A3B8"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4">
+                                                <TextBlock Text="CACHE:" FontSize="9" FontWeight="Bold" Foreground="#64748B"/>
+                                                <TextBlock Text="SQLITE READY" FontSize="9" FontWeight="SemiBold" Foreground="#10B981"/>
+                                            </StackPanel>
+                                        </Grid>
+
+                                        <Grid ColumnDefinitions="*,Auto">
+                                            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="4">
+                                                <TextBlock Text="VERIFY:" FontSize="9" FontWeight="Bold" Foreground="#64748B"/>
+                                                <TextBlock Text="{Binding DestinationVerifySummaryFormatted}" FontSize="9" Foreground="#CBD5E1"/>
+                                            </StackPanel>
+                                            <TextBlock Grid.Column="1" Text="{Binding DestinationCombinedPercentage, StringFormat={}{0:F0}%}" FontSize="9" FontWeight="Bold" Foreground="#10B981"/>
+                                        </Grid>
+
+                                        <!-- Per-Destination Concurrent Streams -->
+                                        <ItemsControl ItemsSource="{Binding DestinationTelemetries}" Margin="0,2,0,0">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate x:DataType="vm:DestinationTelemetryViewModel">
+                                                    <Border Background="#09181B" BorderBrush="#142C2A" BorderThickness="1"
+                                                            CornerRadius="4" Padding="6,4" Margin="0,2">
+                                                        <StackPanel Spacing="3">
+                                                            <Grid ColumnDefinitions="*,Auto">
+                                                                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="4">
+                                                                    <TextBlock Text="⬡" FontSize="8" Foreground="#10B981"/>
+                                                                    <TextBlock Text="{Binding DestinationName}" FontSize="8" FontWeight="Bold"
+                                                                               Foreground="#E2E8F0" TextTrimming="CharacterEllipsis"/>
+                                                                </StackPanel>
+                                                                <TextBlock Grid.Column="1" Text="{Binding StatusText}" FontSize="8"
+                                                                           Foreground="#34D399" FontWeight="SemiBold"/>
+                                                            </Grid>
+                                                            <ProgressBar Value="{Binding Percentage}" Maximum="100"
+                                                                         Height="3" CornerRadius="1.5"
+                                                                         AutomationProperties.Name="Individual Destination Verification Progress"
+                                                                         Background="#162032" Foreground="#10B981"/>
+                                                        </StackPanel>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </Border>
                             </Grid>
-                            <ProgressBar Value="{Binding CurrentFileProgressPercentage}" Maximum="100" Height="5" CornerRadius="3"
-                                         AutomationProperties.Name="Current File Transfer Progress"
-                                         Foreground="#38BDF8" Background="#1E293B"/>
                         </StackPanel>
-                    </StackPanel>
+                    </Border>
 
                     <!-- 4. Live Telemetry Strip -->
                     <Grid ColumnDefinitions="*,*,*,*">
