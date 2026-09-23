@@ -98,7 +98,27 @@ public sealed class MediaCopier : IMediaCopier
                             file.FileLength,
                             0,
                             activeDestPaths,
-                            isCompleted: false)));
+                            isCompleted: false),
+                        SourceTelemetry: BuildSourceCopyTelemetry(
+                            file.RelativePath,
+                            file.FileLength,
+                            0,
+                            totalBytes,
+                            totalCopiedBytes,
+                            missingFiles.Count,
+                            completedFiles,
+                            0.0,
+                            isCompleted: false,
+                            isPaused: true),
+                        DestinationTelemetries: BuildDestinationCopyTelemetries(
+                            activeDestPaths,
+                            totalBytes,
+                            totalCopiedBytes,
+                            missingFiles.Count,
+                            completedFiles,
+                            0.0,
+                            isCompleted: false,
+                            isPaused: true)));
 
                     overallStopwatch.Stop();
                     await pauseToken.WaitWhilePausedAsync(cancellationToken).ConfigureAwait(false);
@@ -275,7 +295,27 @@ public sealed class MediaCopier : IMediaCopier
                                         file.FileLength,
                                         fileCopiedBytes,
                                         activeDestPaths,
-                                        isCompleted: false)));
+                                        isCompleted: false),
+                                    SourceTelemetry: BuildSourceCopyTelemetry(
+                                        file.RelativePath,
+                                        file.FileLength,
+                                        fileCopiedBytes,
+                                        totalBytes,
+                                        totalCopiedBytes,
+                                        missingFiles.Count,
+                                        completedFiles,
+                                        mbPerSec,
+                                        isCompleted: false,
+                                        isPaused: false),
+                                    DestinationTelemetries: BuildDestinationCopyTelemetries(
+                                        activeDestPaths,
+                                        totalBytes,
+                                        totalCopiedBytes,
+                                        missingFiles.Count,
+                                        completedFiles,
+                                        mbPerSec,
+                                        isCompleted: false,
+                                        isPaused: false)));
                             }
 
                             // Compute final in-flight tail hash without touching the source disk again
@@ -394,7 +434,27 @@ public sealed class MediaCopier : IMediaCopier
                 0,
                 0,
                 activeDestPaths,
-                isCompleted: true)));
+                isCompleted: true),
+            SourceTelemetry: BuildSourceCopyTelemetry(
+                string.Empty,
+                0,
+                0,
+                totalBytes,
+                totalCopiedBytes,
+                missingFiles.Count,
+                completedFiles,
+                0.0,
+                isCompleted: true,
+                isPaused: false),
+            DestinationTelemetries: BuildDestinationCopyTelemetries(
+                activeDestPaths,
+                totalBytes,
+                totalCopiedBytes,
+                missingFiles.Count,
+                completedFiles,
+                0.0,
+                isCompleted: true,
+                isPaused: false)));
 
         return completedFiles;
     }
@@ -479,5 +539,98 @@ public sealed class MediaCopier : IMediaCopier
                     : $"{completedFiles:N0} / {totalFiles:N0} files verified",
                 TelemetryText: isCompleted ? "Complete" : (completedFiles > 0 ? "Verifying..." : "Pending"))
         };
+    }
+
+    private static SourceTelemetryInfo BuildSourceCopyTelemetry(
+        string currentFile,
+        long currentFileLength,
+        long currentFileCopied,
+        long totalBytes,
+        long totalCopiedBytes,
+        int totalFiles,
+        int completedFiles,
+        double mbPerSec,
+        bool isCompleted,
+        bool isPaused)
+    {
+        double percentage = isCompleted
+            ? 100.0
+            : (totalBytes > 0 ? Math.Min(100.0, (totalCopiedBytes / (double)totalBytes) * 100.0) : 0.0);
+
+        double filePercentage = currentFileLength > 0
+            ? Math.Min(100.0, (currentFileCopied / (double)currentFileLength) * 100.0)
+            : 0.0;
+
+        string hashStatus = isPaused
+            ? "PAUSED"
+            : (isCompleted ? "COMPLETE" : "READING");
+
+        return new SourceTelemetryInfo(
+            Path: "Source Media",
+            ScanStatus: "COMPLETE",
+            ScanFilesCount: totalFiles,
+            ScanBytesCount: totalBytes,
+            ScanSpeed: 0.0,
+            IndexStatus: "INDEXED",
+            HashStatus: hashStatus,
+            Percentage: percentage,
+            ProcessedBytes: isCompleted ? totalBytes : totalCopiedBytes,
+            TotalBytes: totalBytes,
+            SpeedMbPerSec: isCompleted || isPaused ? 0.0 : mbPerSec,
+            CurrentFile: isCompleted ? null : currentFile,
+            CurrentFilePercentage: isCompleted ? 0.0 : filePercentage,
+            CurrentFileProgressText: isCompleted ? null : $"{ByteSizeFormatter.Format(currentFileCopied)} / {ByteSizeFormatter.Format(currentFileLength)}");
+    }
+
+    private static IReadOnlyList<DestinationTelemetryInfo> BuildDestinationCopyTelemetries(
+        IReadOnlyList<string> activeDestPaths,
+        long totalBytes,
+        long totalCopiedBytes,
+        int totalFiles,
+        int completedFiles,
+        double mbPerSec,
+        bool isCompleted,
+        bool isPaused)
+    {
+        double percentage = isCompleted
+            ? 100.0
+            : (totalBytes > 0 ? Math.Min(100.0, (totalCopiedBytes / (double)totalBytes) * 100.0) : 0.0);
+
+        string verifyStatus = isPaused
+            ? "PAUSED"
+            : (isCompleted ? "COMPLETE" : "WRITING");
+
+        List<DestinationTelemetryInfo> list = new(activeDestPaths.Count);
+        foreach (string targetPath in activeDestPaths)
+        {
+            string name = Path.GetFileName(targetPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                name = targetPath;
+            }
+
+            string statusText = isCompleted
+                ? $"Verified {completedFiles}/{totalFiles} written"
+                : (isPaused ? "Paused" : $"{mbPerSec:F1} MB/s ({completedFiles}/{totalFiles} copied)");
+
+            list.Add(new DestinationTelemetryInfo(
+                DestinationId: targetPath,
+                DestinationName: name,
+                RootPath: targetPath,
+                ScanStatus: "COMPLETE",
+                ScanFilesCount: totalFiles,
+                ScanBytesCount: totalBytes,
+                ScanSpeed: 0.0,
+                IndexStatus: "INDEXED",
+                VerifyStatus: verifyStatus,
+                Percentage: percentage,
+                VerifiedFiles: isCompleted ? totalFiles : completedFiles,
+                TotalFiles: totalFiles,
+                BytesRead: isCompleted ? totalBytes : totalCopiedBytes,
+                SpeedMbPerSec: isCompleted || isPaused ? 0.0 : mbPerSec,
+                StatusText: statusText));
+        }
+
+        return list;
     }
 }

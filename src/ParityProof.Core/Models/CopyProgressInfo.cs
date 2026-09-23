@@ -14,4 +14,6 @@ public sealed record CopyProgressInfo(
     long CurrentFileBytes = 0,
     long CurrentFileCopiedBytes = 0,
     bool IsPaused = false,
-    IReadOnlyList<StageProgressInfo>? Stages = null);
+    IReadOnlyList<StageProgressInfo>? Stages = null,
+    SourceTelemetryInfo? SourceTelemetry = null,
+    IReadOnlyList<DestinationTelemetryInfo>? DestinationTelemetries = null);

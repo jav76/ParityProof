@@ -56,6 +56,46 @@ public sealed class MultiDestinationVerifier : IVerificationEngine
         Stopwatch stopwatch = Stopwatch.StartNew();
         DateTime startTimeUtc = DateTime.UtcNow;
 
+        List<BackupDestination> activeDestinations = destinations.Where(d => d.IsEnabled).ToList();
+        if (activeDestinations.Select(d => d.Id).Distinct(StringComparer.OrdinalIgnoreCase).Count() != activeDestinations.Count)
+        {
+            throw new ArgumentException("Duplicate destination IDs detected in verification request.", nameof(destinations));
+        }
+
+        SourceTelemetryInfo initialSrcTelemetry = new(
+            Path: sourcePath,
+            ScanStatus: "SCANNING",
+            ScanFilesCount: 0,
+            ScanBytesCount: 0,
+            ScanSpeed: 0.0,
+            IndexStatus: "PENDING",
+            HashStatus: "PENDING",
+            Percentage: 0.0,
+            ProcessedBytes: 0,
+            TotalBytes: 0,
+            SpeedMbPerSec: 0.0);
+
+        List<DestinationTelemetryInfo> initialDestTelemetries = new(activeDestinations.Count);
+        foreach (BackupDestination d in activeDestinations)
+        {
+            initialDestTelemetries.Add(new DestinationTelemetryInfo(
+                DestinationId: d.Id,
+                DestinationName: d.Name,
+                RootPath: d.RootPath,
+                ScanStatus: "PENDING",
+                ScanFilesCount: 0,
+                ScanBytesCount: 0,
+                ScanSpeed: 0.0,
+                IndexStatus: "PENDING",
+                VerifyStatus: "PENDING",
+                Percentage: 0.0,
+                VerifiedFiles: 0,
+                TotalFiles: 0,
+                BytesRead: 0,
+                SpeedMbPerSec: 0.0,
+                StatusText: "Pending scan..."));
+        }
+
         progress?.Report(new VerificationProgress(
             CurrentFile: sourcePath,
             ProcessedFiles: 0,
@@ -93,7 +133,9 @@ public sealed class MultiDestinationVerifier : IVerificationEngine
                     TotalUnits: 0,
                     ProgressText: "Waiting for discovery...",
                     TelemetryText: "-- MB/s")
-            }));
+            },
+            SourceTelemetry: initialSrcTelemetry,
+            DestinationTelemetries: initialDestTelemetries));
 
         // Launch concurrent directory scans across source media and all active backup targets simultaneously
         Task<IReadOnlyList<MediaFile>> sourceScanTask = FastDirectoryScanner.ScanDirectoryAsync(
@@ -106,11 +148,6 @@ public sealed class MultiDestinationVerifier : IVerificationEngine
             cancellationToken: cancellationToken,
             pauseToken: pauseToken);
 
-        List<BackupDestination> activeDestinations = destinations.Where(d => d.IsEnabled).ToList();
-        if (activeDestinations.Select(d => d.Id).Distinct(StringComparer.OrdinalIgnoreCase).Count() != activeDestinations.Count)
-        {
-            throw new ArgumentException("Duplicate destination IDs detected in verification request.", nameof(destinations));
-        }
         Task<(BackupDestination Dest, IReadOnlyList<MediaFile> Files)>[] destScanTasks = activeDestinations
             .Select(async dest =>
             {
@@ -122,7 +159,9 @@ public sealed class MultiDestinationVerifier : IVerificationEngine
                     referenceTotalBytes: 0,
                     progress: progress,
                     cancellationToken: cancellationToken,
-                    pauseToken: pauseToken).ConfigureAwait(false);
+                    pauseToken: pauseToken,
+                    destinationId: dest.Id,
+                    destinationName: dest.Name).ConfigureAwait(false);
                 return (dest, files);
             })
             .ToArray();
@@ -160,6 +199,7 @@ public sealed class MultiDestinationVerifier : IVerificationEngine
         (BackupDestination Dest, IReadOnlyList<MediaFile> Files)[] destScanResults =
             await Task.WhenAll(destScanTasks).ConfigureAwait(false);
 
+        Dictionary<string, (int Count, long Bytes)> destScanStats = new(destScanResults.Length);
         List<MediaFile> allScannedFiles = new(sourceFiles.Count);
         allScannedFiles.AddRange(sourceFiles);
 
@@ -167,6 +207,12 @@ public sealed class MultiDestinationVerifier : IVerificationEngine
         {
             allDestinationFiles[dest.Id] = files;
             allScannedFiles.AddRange(files);
+            long dBytes = 0;
+            foreach (MediaFile f in files)
+            {
+                dBytes += f.FileLength;
+            }
+            destScanStats[dest.Id] = (files.Count, dBytes);
         }
 
         // Consolidated batch pre-fetch from SQLite cache for all scanned source and destination media files
@@ -223,7 +269,7 @@ public sealed class MultiDestinationVerifier : IVerificationEngine
             using PeriodicTimer timer = new(TimeSpan.FromMilliseconds(PERSISTENCE_FLUSH_INTERVAL_MS));
             try
             {
-                while (!cancellationToken.IsCancellationRequested || persistenceChannel.Reader.Count > 0)
+                while (!cancellationToken.IsCancellationRequested)
                 {
                     while (persistenceChannel.Reader.TryRead(out MediaFile? item))
                     {
@@ -240,7 +286,7 @@ public sealed class MultiDestinationVerifier : IVerificationEngine
                         batch.Clear();
                     }
 
-                    if (persistenceChannel.Reader.Completion.IsCompleted && persistenceChannel.Reader.Count == 0)
+                    if (persistenceChannel.Reader.Completion.IsCompleted)
                     {
                         break;
                     }
@@ -365,7 +411,28 @@ public sealed class MultiDestinationVerifier : IVerificationEngine
                             new Dictionary<string, double>(),
                             driveDisplayNames,
                             scanDuplicates,
-                            isCompleted: false)));
+                            isCompleted: false),
+                        SourceTelemetry: BuildSourceTelemetry(
+                            sourcePath,
+                            totalFiles,
+                            totalBytes,
+                            pBytesPaused,
+                            0.0,
+                            activeVerificationFile,
+                            isCompleted: false,
+                            isPaused: true),
+                        DestinationTelemetries: BuildDestinationTelemetries(
+                            activeDestinations,
+                            destScanStats,
+                            driveBytesRead,
+                            new Dictionary<string, double>(),
+                            driveDisplayNames,
+                            totalFiles,
+                            totalBytes,
+                            pFilesPaused,
+                            pBytesPaused,
+                            isCompleted: false,
+                            isPaused: true)));
                     continue;
                 }
 
@@ -496,6 +563,7 @@ public sealed class MultiDestinationVerifier : IVerificationEngine
                     ? TimeSpan.FromSeconds(smoothedRemainingSeconds)
                     : TimeSpan.Zero;
 
+                double srcMbPerSec = deviceThroughputs.TryGetValue("SRC", out double s) ? s : 0.0;
                 progress?.Report(new VerificationProgress(
                     CurrentFile: activeVerificationFile,
                     ProcessedFiles: (int)pFiles,
@@ -522,7 +590,28 @@ public sealed class MultiDestinationVerifier : IVerificationEngine
                         deviceThroughputs,
                         driveDisplayNames,
                         scanDuplicates,
-                        isCompleted: false)));
+                        isCompleted: false),
+                    SourceTelemetry: BuildSourceTelemetry(
+                        sourcePath,
+                        totalFiles,
+                        totalBytes,
+                        pBytes,
+                        srcMbPerSec,
+                        activeVerificationFile,
+                        isCompleted: false,
+                        isPaused: false),
+                    DestinationTelemetries: BuildDestinationTelemetries(
+                        activeDestinations,
+                        destScanStats,
+                        currentSnapshot,
+                        deviceThroughputs,
+                        driveDisplayNames,
+                        totalFiles,
+                        totalBytes,
+                        pFiles,
+                        pBytes,
+                        isCompleted: false,
+                        isPaused: false)));
             }
         }, CancellationToken.None);
 
@@ -806,7 +895,28 @@ public sealed class MultiDestinationVerifier : IVerificationEngine
                 new Dictionary<string, double>(),
                 driveDisplayNames,
                 scanDuplicates,
-                isCompleted: true)));
+                isCompleted: true),
+            SourceTelemetry: BuildSourceTelemetry(
+                sourcePath,
+                totalFiles,
+                totalBytes,
+                totalBytes,
+                0.0,
+                string.Empty,
+                isCompleted: true,
+                isPaused: false),
+            DestinationTelemetries: BuildDestinationTelemetries(
+                activeDestinations,
+                destScanStats,
+                finalDriveSnapshot,
+                new Dictionary<string, double>(),
+                driveDisplayNames,
+                totalFiles,
+                totalBytes,
+                totalFiles,
+                totalBytes,
+                isCompleted: true,
+                isPaused: false)));
 
         return (summary, results);
     }
@@ -908,5 +1018,93 @@ public sealed class MultiDestinationVerifier : IVerificationEngine
         }
 
         return stages;
+    }
+
+    private static SourceTelemetryInfo BuildSourceTelemetry(
+        string sourcePath,
+        int totalFiles,
+        long totalBytes,
+        long pBytes,
+        double srcSpeedMbPerSec,
+        string activeVerificationFile,
+        bool isCompleted,
+        bool isPaused)
+    {
+        double percentage = isCompleted
+            ? 100.0
+            : (totalBytes > 0 ? Math.Min(100.0, (pBytes / (double)totalBytes) * 100.0) : 0.0);
+
+        string hashStatus = isPaused
+            ? "PAUSED"
+            : (isCompleted || (pBytes >= totalBytes && totalBytes > 0) ? "COMPLETE" : "HASHING");
+
+        return new SourceTelemetryInfo(
+            Path: sourcePath,
+            ScanStatus: "COMPLETE",
+            ScanFilesCount: totalFiles,
+            ScanBytesCount: totalBytes,
+            ScanSpeed: 0.0,
+            IndexStatus: "INDEXED",
+            HashStatus: hashStatus,
+            Percentage: percentage,
+            ProcessedBytes: isCompleted ? totalBytes : pBytes,
+            TotalBytes: totalBytes,
+            SpeedMbPerSec: isCompleted || isPaused ? 0.0 : srcSpeedMbPerSec,
+            CurrentFile: isCompleted ? null : activeVerificationFile);
+    }
+
+    private static IReadOnlyList<DestinationTelemetryInfo> BuildDestinationTelemetries(
+        IReadOnlyList<BackupDestination> activeDestinations,
+        IReadOnlyDictionary<string, (int Count, long Bytes)> destScanStats,
+        IReadOnlyDictionary<string, long> currentSnapshot,
+        IReadOnlyDictionary<string, double> deviceThroughputs,
+        IReadOnlyDictionary<string, string> driveDisplayNames,
+        int totalFiles,
+        long totalBytes,
+        long pFiles,
+        long pBytes,
+        bool isCompleted,
+        bool isPaused)
+    {
+        double percentage = isCompleted
+            ? 100.0
+            : (totalBytes > 0 ? Math.Min(100.0, (pBytes / (double)totalBytes) * 100.0) : 0.0);
+
+        List<DestinationTelemetryInfo> destTelemetries = new(activeDestinations.Count);
+        foreach (BackupDestination dest in activeDestinations)
+        {
+            string displayName = driveDisplayNames.TryGetValue(dest.Id, out string? dn) ? dn : dest.Name;
+            double dSpeed = deviceThroughputs.TryGetValue(displayName, out double rate) ? rate : 0.0;
+            long dBytes = currentSnapshot.TryGetValue(dest.Id, out long db) ? db : 0;
+            int scanFiles = destScanStats.TryGetValue(dest.Id, out (int Count, long Bytes) stats) ? stats.Count : 0;
+            long scanBytes = stats.Bytes;
+
+            string verifyStatus = isPaused
+                ? "PAUSED"
+                : (isCompleted || (pFiles >= totalFiles && totalFiles > 0) ? "VERIFIED" : "VERIFYING");
+
+            string statusText = isCompleted
+                ? "Verified"
+                : (isPaused ? "Paused" : $"{dSpeed:F1} MB/s ({ByteSizeFormatter.Format(dBytes)} read)");
+
+            destTelemetries.Add(new DestinationTelemetryInfo(
+                DestinationId: dest.Id,
+                DestinationName: displayName,
+                RootPath: dest.RootPath,
+                ScanStatus: "COMPLETE",
+                ScanFilesCount: scanFiles,
+                ScanBytesCount: scanBytes,
+                ScanSpeed: 0.0,
+                IndexStatus: "INDEXED",
+                VerifyStatus: verifyStatus,
+                Percentage: percentage,
+                VerifiedFiles: isCompleted ? totalFiles : (int)pFiles,
+                TotalFiles: totalFiles,
+                BytesRead: dBytes,
+                SpeedMbPerSec: isCompleted || isPaused ? 0.0 : dSpeed,
+                StatusText: statusText));
+        }
+
+        return destTelemetries;
     }
 }

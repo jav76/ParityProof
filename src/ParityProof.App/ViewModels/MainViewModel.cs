@@ -18,6 +18,7 @@ using ParityProof.Core.Interfaces;
 using ParityProof.Core.Logging;
 using ParityProof.Core.Models;
 using ParityProof.Core.Threading;
+using ParityProof.Core.Utils;
 using ParityProof.Engine.Cache;
 using ParityProof.Engine.IO;
 using ParityProof.Engine.Matching;
@@ -254,6 +255,59 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     private ObservableCollection<StageProgressViewModel> _pipelineStages = new();
 
     public bool HasPipelineStages => PipelineStages.Count > 0;
+
+    [ObservableProperty]
+    private SourceTelemetryViewModel _sourceTelemetry = new();
+
+    public ObservableCollection<DestinationTelemetryViewModel> DestinationTelemetries { get; } = new();
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasEngineSubsections))]
+    private bool _hasSourceTelemetry;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasEngineSubsections))]
+    private bool _hasDestinationTelemetries;
+
+    [ObservableProperty]
+    private double _destinationCombinedSpeed;
+
+    [ObservableProperty]
+    private string _destinationCombinedSpeedFormatted = "-- MB/s";
+
+    [ObservableProperty]
+    private double _destinationCombinedPercentage;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(DestinationCombinedStatusBadgeBackground))]
+    [NotifyPropertyChangedFor(nameof(DestinationCombinedStatusBadgeForeground))]
+    private string _destinationCombinedStatus = "PENDING";
+
+    public string DestinationCombinedStatusBadgeBackground => DestinationCombinedStatus switch
+    {
+        "COMPLETE" or "VERIFIED" => "#064E3B",
+        "VERIFYING" or "WRITING" => "#065F46",
+        "PAUSED" => "#78350F",
+        "SCANNING" => "#3B0764",
+        _ => "#1F2937"
+    };
+
+    public string DestinationCombinedStatusBadgeForeground => DestinationCombinedStatus switch
+    {
+        "COMPLETE" or "VERIFIED" => "#34D399",
+        "VERIFYING" or "WRITING" => "#10B981",
+        "PAUSED" => "#FBBF24",
+        "SCANNING" => "#C084FC",
+        _ => "#9CA3AF"
+    };
+
+    [ObservableProperty]
+    private string _destinationScanSummaryFormatted = "Scanning...";
+
+    [ObservableProperty]
+    private string _destinationVerifySummaryFormatted = "-- / --";
+
+    public bool HasEngineSubsections => HasSourceTelemetry || HasDestinationTelemetries;
 
     [ObservableProperty]
     private double _copyProgressPercentage;
@@ -922,6 +976,16 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         BatchProgressPercentage = 0;
         BatchProgressSummaryText = "Scanning directory...";
         PipelineStages.Clear();
+        OnPropertyChanged(nameof(HasPipelineStages));
+        HasSourceTelemetry = false;
+        HasDestinationTelemetries = false;
+        DestinationTelemetries.Clear();
+        DestinationCombinedSpeed = 0;
+        DestinationCombinedSpeedFormatted = "-- MB/s";
+        DestinationCombinedPercentage = 0;
+        DestinationCombinedStatus = "PENDING";
+        DestinationScanSummaryFormatted = "Pending...";
+        DestinationVerifySummaryFormatted = "-- / --";
         CurrentFileProgressPercentage = 0;
         ThroughputText = "0.0 MB/s";
         EtaText = "--:--";
@@ -996,6 +1060,17 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
                 if (p.Stages is not null && p.Stages.Count > 0)
                 {
                     UpdatePipelineStages(p.Stages);
+                }
+
+                if (p.SourceTelemetry is not null)
+                {
+                    SourceTelemetry.UpdateFrom(p.SourceTelemetry);
+                    HasSourceTelemetry = true;
+                }
+
+                if (p.DestinationTelemetries is not null && p.DestinationTelemetries.Count > 0)
+                {
+                    SyncDestinationTelemetries(p.DestinationTelemetries);
                 }
 
                 if (!string.IsNullOrEmpty(p.CurrentFile))
@@ -1320,6 +1395,22 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
                     ThroughputText = "-- MB/s";
                 }
 
+                if (p.Stages is not null && p.Stages.Count > 0)
+                {
+                    UpdatePipelineStages(p.Stages);
+                }
+
+                if (p.SourceTelemetry is not null)
+                {
+                    SourceTelemetry.UpdateFrom(p.SourceTelemetry);
+                    HasSourceTelemetry = true;
+                }
+
+                if (p.DestinationTelemetries is not null && p.DestinationTelemetries.Count > 0)
+                {
+                    SyncDestinationTelemetries(p.DestinationTelemetries);
+                }
+
                 if (p.EstimatedTimeRemaining > TimeSpan.Zero)
                 {
                     EtaText = $"{p.EstimatedTimeRemaining:mm\\:ss}";
@@ -1515,6 +1606,16 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         BatchProgressPercentage = 0;
         BatchProgressSummaryText = "0% (0 / 0)";
         PipelineStages.Clear();
+        OnPropertyChanged(nameof(HasPipelineStages));
+        HasSourceTelemetry = false;
+        HasDestinationTelemetries = false;
+        DestinationTelemetries.Clear();
+        DestinationCombinedSpeed = 0;
+        DestinationCombinedSpeedFormatted = "-- MB/s";
+        DestinationCombinedPercentage = 0;
+        DestinationCombinedStatus = "PENDING";
+        DestinationScanSummaryFormatted = "Pending...";
+        DestinationVerifySummaryFormatted = "-- / --";
         CurrentFileProgressPercentage = 0;
         ThroughputText = "0.0 MB/s";
         EtaText = "--:--";
@@ -1590,6 +1691,17 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
                 if (p.Stages is not null && p.Stages.Count > 0)
                 {
                     UpdatePipelineStages(p.Stages);
+                }
+
+                if (p.SourceTelemetry is not null)
+                {
+                    SourceTelemetry.UpdateFrom(p.SourceTelemetry);
+                    HasSourceTelemetry = true;
+                }
+
+                if (p.DestinationTelemetries is not null && p.DestinationTelemetries.Count > 0)
+                {
+                    SyncDestinationTelemetries(p.DestinationTelemetries);
                 }
             });
 
@@ -1798,6 +1910,97 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
                 PipelineStages.Add(new StageProgressViewModel(info));
             }
         }
+
+        OnPropertyChanged(nameof(HasPipelineStages));
+    }
+
+    private void SyncDestinationTelemetries(IReadOnlyList<DestinationTelemetryInfo> incoming)
+    {
+        Dictionary<string, DestinationTelemetryInfo> incomingMap = new(incoming.Count);
+        double totalSpeed = 0;
+        double maxPct = 0;
+        int totalScanFiles = 0;
+        long totalScanBytes = 0;
+        int totalVerifiedFiles = 0;
+        int totalTargetFiles = 0;
+        string combinedStatus = "READY";
+
+        foreach (DestinationTelemetryInfo info in incoming)
+        {
+            incomingMap[info.DestinationId] = info;
+            totalSpeed += info.SpeedMbPerSec;
+            if (info.Percentage > maxPct)
+            {
+                maxPct = info.Percentage;
+            }
+
+            totalScanFiles += info.ScanFilesCount;
+            totalScanBytes += info.ScanBytesCount;
+            totalVerifiedFiles += info.VerifiedFiles;
+            totalTargetFiles += info.TotalFiles;
+
+            if (info.VerifyStatus is "VERIFYING" or "WRITING")
+            {
+                combinedStatus = info.VerifyStatus;
+            }
+            else if (info.VerifyStatus == "PAUSED")
+            {
+                combinedStatus = "PAUSED";
+            }
+            else if (info.ScanStatus == "SCANNING" && combinedStatus != "VERIFYING")
+            {
+                combinedStatus = "SCANNING";
+            }
+            else if (info.VerifyStatus is "COMPLETE" or "VERIFIED" && combinedStatus == "READY")
+            {
+                combinedStatus = info.VerifyStatus;
+            }
+        }
+
+        DestinationCombinedSpeed = Math.Round(totalSpeed, 1);
+        DestinationCombinedSpeedFormatted = totalSpeed > 0 ? $"{totalSpeed:F1} MB/s" : "-- MB/s";
+        DestinationCombinedPercentage = maxPct;
+        DestinationCombinedStatus = combinedStatus;
+
+        DestinationScanSummaryFormatted = totalScanFiles > 0
+            ? $"{totalScanFiles:N0} files ({ByteSizeFormatter.Format(totalScanBytes)})"
+            : (combinedStatus is "COMPLETE" or "VERIFIED" ? "0 files" : "Scanning...");
+
+        DestinationVerifySummaryFormatted = totalTargetFiles > 0
+            ? $"{totalVerifiedFiles:N0} / {totalTargetFiles:N0} ({maxPct:F0}%)"
+            : "-- / --";
+
+        for (int i = DestinationTelemetries.Count - 1; i >= 0; i--)
+        {
+            if (!incomingMap.ContainsKey(DestinationTelemetries[i].DestinationId))
+            {
+                DestinationTelemetries.RemoveAt(i);
+            }
+        }
+
+        foreach (DestinationTelemetryInfo info in incoming)
+        {
+            DestinationTelemetryViewModel? existing = null;
+            foreach (DestinationTelemetryViewModel vm in DestinationTelemetries)
+            {
+                if (vm.DestinationId == info.DestinationId)
+                {
+                    existing = vm;
+                    break;
+                }
+            }
+
+            if (existing is not null)
+            {
+                existing.UpdateFrom(info);
+            }
+            else
+            {
+                DestinationTelemetries.Add(new DestinationTelemetryViewModel(info));
+            }
+        }
+
+        HasDestinationTelemetries = DestinationTelemetries.Count > 0;
     }
 
     public void Dispose()

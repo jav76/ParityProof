@@ -18,5 +18,7 @@ public sealed record VerificationProgress(
     double ScanRateFilesPerSecond = 0.0,
     string? MultiDriveThroughputText = null,
     IReadOnlyDictionary<string, double>? DeviceThroughputs = null,
-    IReadOnlyList<StageProgressInfo>? Stages = null);
+    IReadOnlyList<StageProgressInfo>? Stages = null,
+    SourceTelemetryInfo? SourceTelemetry = null,
+    IReadOnlyList<DestinationTelemetryInfo>? DestinationTelemetries = null);
 

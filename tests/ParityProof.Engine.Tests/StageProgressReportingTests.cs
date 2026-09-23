@@ -206,6 +206,122 @@ public sealed class StageProgressReportingTests : IDisposable
         Assert.False(vm.HasActiveFile);
     }
 
+    [Fact]
+    public async Task VerifyAsync_ReportsSourceAndDestinationEngineTelemetry()
+    {
+        string cardDir = Path.Combine(_testDir, "telemetry_card");
+        string ssdDir = Path.Combine(_testDir, "telemetry_ssd");
+        Directory.CreateDirectory(cardDir);
+        Directory.CreateDirectory(ssdDir);
+
+        byte[] payload = new byte[TEST_FILE_SIZE_BYTES];
+        Random.Shared.NextBytes(payload);
+        File.WriteAllBytes(Path.Combine(cardDir, "SAMPLE.CR3"), payload);
+        File.WriteAllBytes(Path.Combine(ssdDir, "SAMPLE.CR3"), payload);
+
+        List<BackupDestination> destinations = new()
+        {
+            new BackupDestination(
+                Id: "dest-telemetry",
+                Name: "SSD Target",
+                RootPath: ssdDir,
+                IsEnabled: true,
+                IsRequired: true)
+        };
+
+        List<VerificationProgress> progressReports = new();
+        Progress<VerificationProgress> progress = new(p =>
+        {
+            lock (progressReports)
+            {
+                progressReports.Add(p);
+            }
+        });
+
+        (VerificationSummary summary, IReadOnlyList<VerificationResultItem> results) = await _verifier.VerifyAsync(
+            cardDir,
+            destinations,
+            VerificationMode.Quick,
+            FilterPreset.PhotosAndVideos,
+            progress: progress);
+
+        Assert.Equal(1, summary.TotalFiles);
+        Assert.True(progressReports.Count > 0);
+
+        // Verify initial report has scanning telemetry
+        VerificationProgress initialReport = progressReports.First();
+        Assert.NotNull(initialReport.SourceTelemetry);
+        Assert.Equal("SCANNING", initialReport.SourceTelemetry.ScanStatus);
+        Assert.NotNull(initialReport.DestinationTelemetries);
+        Assert.Single(initialReport.DestinationTelemetries);
+
+        // Verify final report has complete status
+        VerificationProgress finalReport = progressReports.Last();
+        Assert.NotNull(finalReport.SourceTelemetry);
+        Assert.Equal("COMPLETE", finalReport.SourceTelemetry.ScanStatus);
+        Assert.Equal("COMPLETE", finalReport.SourceTelemetry.HashStatus);
+        Assert.Equal(100.0, finalReport.SourceTelemetry.Percentage);
+
+        Assert.NotNull(finalReport.DestinationTelemetries);
+        Assert.Single(finalReport.DestinationTelemetries);
+        DestinationTelemetryInfo destTelemetry = finalReport.DestinationTelemetries[0];
+        Assert.Equal("dest-telemetry", destTelemetry.DestinationId);
+        Assert.Equal("COMPLETE", destTelemetry.ScanStatus);
+        Assert.Equal("VERIFIED", destTelemetry.VerifyStatus);
+        Assert.Equal(100.0, destTelemetry.Percentage);
+    }
+
+    [Fact]
+    public void SourceAndDestinationTelemetryViewModels_FormatMetricsAndColorsCorrectly()
+    {
+        SourceTelemetryInfo srcInfo = new(
+            Path: "/media/card",
+            ScanStatus: "COMPLETE",
+            ScanFilesCount: 804,
+            ScanBytesCount: 38830000000L,
+            ScanSpeed: 450.0,
+            IndexStatus: "INDEXED",
+            HashStatus: "HASHING",
+            Percentage: 18.5,
+            ProcessedBytes: 6800000000L,
+            TotalBytes: 38830000000L,
+            SpeedMbPerSec: 271.6,
+            CurrentFile: "DSC01135.ARW",
+            CurrentFilePercentage: 45.0,
+            CurrentFileProgressText: "15 MB / 33 MB");
+
+        SourceTelemetryViewModel srcVm = new(srcInfo);
+        Assert.Equal("271.6 MB/s", srcVm.SpeedFormatted);
+        Assert.True(srcVm.HasActiveFile);
+        Assert.Equal("DSC01135.ARW", srcVm.CurrentFile);
+        Assert.Equal("#075985", srcVm.HashStatusBadgeBackground);
+        Assert.Equal("#38BDF8", srcVm.HashStatusBadgeForeground);
+
+        DestinationTelemetryInfo destInfo = new(
+            DestinationId: "truenas_primary",
+            DestinationName: "TrueNAS Primary",
+            RootPath: "/mnt/nas",
+            ScanStatus: "COMPLETE",
+            ScanFilesCount: 804,
+            ScanBytesCount: 38830000000L,
+            ScanSpeed: 300.0,
+            IndexStatus: "INDEXED",
+            VerifyStatus: "VERIFYING",
+            Percentage: 18.5,
+            VerifiedFiles: 146,
+            TotalFiles: 804,
+            BytesRead: 6800000000L,
+            SpeedMbPerSec: 109.0,
+            StatusText: "109.0 MB/s (6.33 GB read)");
+
+        DestinationTelemetryViewModel destVm = new(destInfo);
+        Assert.True(destVm.HasSpeed);
+        Assert.Equal("109.0 MB/s", destVm.SpeedFormatted);
+        Assert.Equal("146 / 804 (18%)", destVm.VerifySummaryFormatted);
+        Assert.Equal("#065F46", destVm.VerifyStatusBadgeBackground);
+        Assert.Equal("#10B981", destVm.VerifyStatusBadgeForeground);
+    }
+
     public void Dispose()
     {
         try

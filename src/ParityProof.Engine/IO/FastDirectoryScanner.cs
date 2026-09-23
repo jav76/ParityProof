@@ -94,7 +94,9 @@ public static class FastDirectoryScanner
         long referenceTotalBytes = 0,
         IProgress<VerificationProgress>? progress = null,
         CancellationToken cancellationToken = default,
-        PauseToken pauseToken = default)
+        PauseToken pauseToken = default,
+        string? destinationId = null,
+        string? destinationName = null)
     {
         List<MediaFile> emptyList = new();
         if (string.IsNullOrWhiteSpace(rootPath) || !Directory.Exists(rootPath))
@@ -145,6 +147,45 @@ public static class FastDirectoryScanner
                 {
                     long pFilesPaused = Interlocked.Read(ref totalDiscoveredFiles);
                     long pBytesPaused = Interlocked.Read(ref totalDiscoveredBytes);
+
+                    SourceTelemetryInfo? pauseSrc = destinationId is null
+                        ? new(
+                            Path: normalizedRoot,
+                            ScanStatus: "PAUSED",
+                            ScanFilesCount: (int)pFilesPaused,
+                            ScanBytesCount: pBytesPaused,
+                            ScanSpeed: 0,
+                            IndexStatus: "PENDING",
+                            HashStatus: "PENDING",
+                            Percentage: 0.0,
+                            ProcessedBytes: 0,
+                            TotalBytes: pBytesPaused,
+                            SpeedMbPerSec: 0,
+                            CurrentFile: currentActiveFolder)
+                        : null;
+
+                    DestinationTelemetryInfo[]? pauseDest = destinationId is not null
+                        ? new DestinationTelemetryInfo[]
+                        {
+                            new(
+                                DestinationId: destinationId,
+                                DestinationName: destinationName ?? destinationId,
+                                RootPath: normalizedRoot,
+                                ScanStatus: "PAUSED",
+                                ScanFilesCount: (int)pFilesPaused,
+                                ScanBytesCount: pBytesPaused,
+                                ScanSpeed: 0,
+                                IndexStatus: "PENDING",
+                                VerifyStatus: "PENDING",
+                                Percentage: 0.0,
+                                VerifiedFiles: 0,
+                                TotalFiles: 0,
+                                BytesRead: pBytesPaused,
+                                SpeedMbPerSec: 0,
+                                StatusText: "Paused")
+                        }
+                        : null;
+
                     progress?.Report(new VerificationProgress(
                         CurrentFile: currentActiveFolder,
                         ProcessedFiles: (int)pFilesPaused,
@@ -158,7 +199,9 @@ public static class FastDirectoryScanner
                         EstimatedTimeRemaining: TimeSpan.Zero,
                         IsPaused: true,
                         ScanRateFilesPerSecond: 0,
-                        Stages: CreateScanStages(pFilesPaused, pBytesPaused, 0, isCompleted: false)));
+                        Stages: CreateScanStages(pFilesPaused, pBytesPaused, 0, isCompleted: false),
+                        SourceTelemetry: pauseSrc,
+                        DestinationTelemetries: pauseDest));
                     continue;
                 }
 
@@ -168,6 +211,44 @@ public static class FastDirectoryScanner
                 double scanRate = elapsedSeconds > 0 ? (filesCount / elapsedSeconds) : 0.0;
                 double mbDiscovered = bytesCount / (1024.0 * 1024.0);
                 double mbPerSec = elapsedSeconds > 0 ? (mbDiscovered / elapsedSeconds) : 0.0;
+
+                SourceTelemetryInfo? liveSrc = destinationId is null
+                    ? new(
+                        Path: normalizedRoot,
+                        ScanStatus: "SCANNING",
+                        ScanFilesCount: (int)filesCount,
+                        ScanBytesCount: bytesCount,
+                        ScanSpeed: Math.Round(scanRate, 0),
+                        IndexStatus: "PENDING",
+                        HashStatus: "PENDING",
+                        Percentage: 0.0,
+                        ProcessedBytes: 0,
+                        TotalBytes: bytesCount,
+                        SpeedMbPerSec: Math.Round(mbPerSec, 1),
+                        CurrentFile: currentActiveFolder)
+                    : null;
+
+                DestinationTelemetryInfo[]? liveDest = destinationId is not null
+                    ? new DestinationTelemetryInfo[]
+                    {
+                        new(
+                            DestinationId: destinationId,
+                            DestinationName: destinationName ?? destinationId,
+                            RootPath: normalizedRoot,
+                            ScanStatus: "SCANNING",
+                            ScanFilesCount: (int)filesCount,
+                            ScanBytesCount: bytesCount,
+                            ScanSpeed: Math.Round(scanRate, 0),
+                            IndexStatus: "PENDING",
+                            VerifyStatus: "PENDING",
+                            Percentage: 0.0,
+                            VerifiedFiles: 0,
+                            TotalFiles: 0,
+                            BytesRead: bytesCount,
+                            SpeedMbPerSec: Math.Round(mbPerSec, 1),
+                            StatusText: $"Scanning ({Math.Round(mbPerSec, 1):F1} MB/s)")
+                    }
+                    : null;
 
                 progress?.Report(new VerificationProgress(
                     CurrentFile: currentActiveFolder,
@@ -182,9 +263,12 @@ public static class FastDirectoryScanner
                     EstimatedTimeRemaining: TimeSpan.Zero,
                     IsPaused: false,
                     ScanRateFilesPerSecond: Math.Round(scanRate, 0),
-                    Stages: CreateScanStages(filesCount, bytesCount, scanRate, isCompleted: false)));
+                    Stages: CreateScanStages(filesCount, bytesCount, scanRate, isCompleted: false),
+                    SourceTelemetry: liveSrc,
+                    DestinationTelemetries: liveDest));
             }
         }, CancellationToken.None);
+
 
         EnumerationOptions enumOptions = new()
         {
