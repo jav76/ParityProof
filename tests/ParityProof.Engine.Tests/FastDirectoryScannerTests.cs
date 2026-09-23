@@ -100,6 +100,58 @@ public sealed class FastDirectoryScannerTests : IDisposable
         Assert.EndsWith("KEEP_ME.JPG", files[0].FullPath);
     }
 
+    [Theory]
+    [InlineData("Lightroom Catalog-v13-4 Previews.lrdata", true)]
+    [InlineData("Smart Previews.lrdata", true)]
+    [InlineData("Helper.lrdata", true)]
+    [InlineData("My Photos.photoslibrary", true)]
+    [InlineData("Legacy.photolibrary", true)]
+    [InlineData("OldLibrary.aplibrary", true)]
+    [InlineData("CaptureSession.copkg", true)]
+    [InlineData(".git", true)]
+    [InlineData(".cache", true)]
+    [InlineData("$recycle.bin", true)]
+    [InlineData(".Trash-1000", true)]
+    [InlineData(".TemporaryItems", true)]
+    [InlineData(".DocumentRevisions-V100", true)]
+    [InlineData("DCIM", false)]
+    [InlineData("100EOS", false)]
+    [InlineData("Wedding_Photos", false)]
+    [InlineData("Lightroom Catalogs", false)]
+    public void IsIgnoredDirectory_IdentifiesApplicationPreviewPackagesAndSystemFoldersCorrectly(
+        string directoryName,
+        bool expectedIgnored)
+    {
+        bool isIgnoredString = FastDirectoryScanner.IsIgnoredDirectory(directoryName);
+        bool isIgnoredSpan = FastDirectoryScanner.IsIgnoredDirectory(directoryName.AsSpan());
+
+        Assert.Equal(expectedIgnored, isIgnoredString);
+        Assert.Equal(expectedIgnored, isIgnoredSpan);
+    }
+
+    [Fact]
+    public void ScanDirectory_SkipsLightroomPreviewPackagesAndPhotosLibraries()
+    {
+        string dcimDir = Path.Combine(_testDir, "DCIM", "100EOS");
+        string lrdataDir = Path.Combine(_testDir, "Catalogs", "Lightroom Catalog Previews.lrdata", "0", "001");
+        string photosLibDir = Path.Combine(_testDir, "Pictures", "Apple.photoslibrary", "resources");
+
+        Directory.CreateDirectory(dcimDir);
+        Directory.CreateDirectory(lrdataDir);
+        Directory.CreateDirectory(photosLibDir);
+
+        File.WriteAllBytes(Path.Combine(dcimDir, "ACTUAL_SHOOT.JPG"), new byte[500]);
+        File.WriteAllBytes(Path.Combine(lrdataDir, "CACHED_PREVIEW.JPG"), new byte[200]);
+        File.WriteAllBytes(Path.Combine(photosLibDir, "THUMBNAIL.JPG"), new byte[100]);
+
+        IReadOnlyList<MediaFile> files = FastDirectoryScanner.ScanDirectory(
+            _testDir,
+            FilterPreset.PhotosOnly);
+
+        Assert.Single(files);
+        Assert.EndsWith("ACTUAL_SHOOT.JPG", files[0].FullPath);
+    }
+
     public void Dispose()
     {
         try
