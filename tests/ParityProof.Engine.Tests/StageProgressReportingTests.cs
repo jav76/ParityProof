@@ -146,12 +146,12 @@ public sealed class StageProgressReportingTests : IDisposable
             }
         });
 
-        int copiedCount = await _copier.CopyMissingFilesAsync(
+        CopyBatchResult copyResult = await _copier.CopyMissingFilesAsync(
             new[] { missingFile },
             new[] { targetDir1, targetDir2 },
             progress: progress);
 
-        Assert.Equal(1, copiedCount);
+        Assert.Equal(1, copyResult.CopiedCount);
         Assert.True(copyReports.Count > 0);
 
         CopyProgressInfo? finalReport = copyReports.LastOrDefault(r => r.Stages is not null && r.Stages.Count > 0);
