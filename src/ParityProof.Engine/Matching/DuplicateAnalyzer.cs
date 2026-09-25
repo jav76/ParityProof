@@ -342,7 +342,7 @@ public sealed class DuplicateAnalyzer : IDuplicateAnalyzer
                 long fileSize = bucket[0].File.FileLength;
                 ulong head = bucket[0].File.HeadHash ?? 0UL;
                 ulong tail = bucket[0].File.TailHash ?? 0UL;
-                string groupKey = $"{head:x16}_{tail:x16}";
+                string groupKey = $"0x{head:X16}_0x{tail:X16}";
                 quickGroups.Add((fileSize, groupKey, bucket));
             }
 
@@ -514,7 +514,7 @@ public sealed class DuplicateAnalyzer : IDuplicateAnalyzer
         {
             if (kvp.Value.Count > 1)
             {
-                fullGroups.Add((kvp.Key.Length, $"{kvp.Key.Hash:x16}", kvp.Value));
+                fullGroups.Add((kvp.Key.Length, $"0x{kvp.Key.Hash:X16}", kvp.Value));
             }
         }
 

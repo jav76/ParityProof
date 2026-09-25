@@ -13,7 +13,13 @@ public sealed record JsonReportPayload(
     VerificationSummary Summary,
     IReadOnlyList<VerificationResultItem> Results);
 
-[JsonSourceGenerationOptions(WriteIndented = true, PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+// HexUInt64JsonConverter applies to every ulong in the report graph, so report models reserve ulong for hashes.
+// ReportGeneratorTests.JsonReportModels_ReserveUInt64ForHashes fails if a non-hash ulong is added.
+[JsonSourceGenerationOptions(
+    WriteIndented = true,
+    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
+    UseStringEnumConverter = true,
+    Converters = new[] { typeof(HexUInt64JsonConverter) })]
 [JsonSerializable(typeof(JsonReportPayload))]
 [JsonSerializable(typeof(DuplicateAnalysisResult))]
 [JsonSerializable(typeof(DuplicateGroup))]

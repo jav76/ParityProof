@@ -507,6 +507,69 @@ public sealed class MultiDestinationVerifierTests : IDisposable
         Assert.Equal(OverallSafetyStatus.UnsafeToFormat, summary.SafetyStatus);
     }
 
+    [Fact]
+    public async Task VerifyAsync_SummaryCounts_MatchSharedOverallStatusClassification()
+    {
+        string cardDir = Path.Combine(_testDir, "card_overall");
+        string ssdDir = Path.Combine(_testDir, "ssd_overall");
+        string nasDir = Path.Combine(_testDir, "nas_overall");
+        Directory.CreateDirectory(cardDir);
+        Directory.CreateDirectory(ssdDir);
+        Directory.CreateDirectory(nasDir);
+
+        const int FILE_SIZE = 256 * 1024;
+        const int CORRUPT_OFFSET = 128 * 1024;
+        byte[] everywhere = new byte[FILE_SIZE];
+        byte[] corruptOnNas = new byte[FILE_SIZE];
+        byte[] ssdOnly = new byte[FILE_SIZE];
+        byte[] nowhere = new byte[FILE_SIZE];
+        Random.Shared.NextBytes(everywhere);
+        Random.Shared.NextBytes(corruptOnNas);
+        Random.Shared.NextBytes(ssdOnly);
+        Random.Shared.NextBytes(nowhere);
+
+        byte[] damagedCopy = (byte[])corruptOnNas.Clone();
+        damagedCopy[CORRUPT_OFFSET] = (byte)(damagedCopy[CORRUPT_OFFSET] ^ 0xFF);
+
+        File.WriteAllBytes(Path.Combine(cardDir, "IMG_0001.CR3"), everywhere);
+        File.WriteAllBytes(Path.Combine(cardDir, "IMG_0002.CR3"), corruptOnNas);
+        File.WriteAllBytes(Path.Combine(cardDir, "IMG_0003.CR3"), ssdOnly);
+        File.WriteAllBytes(Path.Combine(cardDir, "IMG_0004.CR3"), nowhere);
+
+        File.WriteAllBytes(Path.Combine(ssdDir, "IMG_0001.CR3"), everywhere);
+        File.WriteAllBytes(Path.Combine(ssdDir, "IMG_0002.CR3"), corruptOnNas);
+        File.WriteAllBytes(Path.Combine(ssdDir, "IMG_0003.CR3"), ssdOnly);
+        File.WriteAllBytes(Path.Combine(nasDir, "IMG_0001.CR3"), everywhere);
+        File.WriteAllBytes(Path.Combine(nasDir, "IMG_0002.CR3"), damagedCopy);
+
+        List<BackupDestination> destinations = new()
+        {
+            new BackupDestination("ssd", "Primary SSD", ssdDir),
+            new BackupDestination("nas", "Archive NAS", nasDir)
+        };
+
+        (VerificationSummary summary, IReadOnlyList<VerificationResultItem> results) = await _verifier.VerifyAsync(
+            cardDir,
+            destinations,
+            VerificationMode.Full,
+            FilterPreset.PhotosOnly);
+
+        VerificationResultItem verifiedAndCorrupt = results.Single(
+            item => item.SourceFile.RelativePath == "IMG_0002.CR3");
+        Assert.Equal(FileOverallStatus.Corrupt, verifiedAndCorrupt.OverallStatus);
+
+        Assert.Equal(1, summary.FullyVerifiedFiles);
+        Assert.Equal(1, summary.PartiallyVerifiedFiles);
+        Assert.Equal(1, summary.MissingFiles);
+        Assert.Equal(1, summary.CorruptFiles);
+
+        int CountWithStatus(FileOverallStatus status) => results.Count(item => item.OverallStatus == status);
+        Assert.Equal(summary.FullyVerifiedFiles, CountWithStatus(FileOverallStatus.Verified));
+        Assert.Equal(summary.PartiallyVerifiedFiles, CountWithStatus(FileOverallStatus.Partial));
+        Assert.Equal(summary.MissingFiles, CountWithStatus(FileOverallStatus.Missing));
+        Assert.Equal(summary.CorruptFiles, CountWithStatus(FileOverallStatus.Corrupt));
+    }
+
     public void Dispose()
     {
         try

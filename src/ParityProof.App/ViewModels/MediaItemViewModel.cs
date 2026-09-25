@@ -245,19 +245,20 @@ public sealed partial class MediaItemViewModel : ViewModelBase
         }
     }
 
-    public string StatusText => Item.IsFullyVerified
-        ? "Verified"
-        : Item.IsPartiallyVerified
-            ? "Partial"
-            : Item.HasAnyCorruption
-                ? "Corrupt"
-                : "Missing";
+    public string StatusText => Item.OverallStatus switch
+    {
+        FileOverallStatus.Verified => "Verified",
+        FileOverallStatus.Partial => "Partial",
+        FileOverallStatus.Corrupt => "Corrupt",
+        _ => "Missing"
+    };
 
-    public string StatusBadgeColor => Item.IsFullyVerified
-        ? "#10B981"
-        : Item.IsPartiallyVerified
-            ? "#F59E0B"
-            : "#F43F5E";
+    public string StatusBadgeColor => Item.OverallStatus switch
+    {
+        FileOverallStatus.Verified => "#10B981",
+        FileOverallStatus.Partial => "#F59E0B",
+        _ => "#F43F5E"
+    };
 
     public string DestinationSummary
     {

@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Net;
@@ -13,6 +12,8 @@ namespace ParityProof.Engine.Reporting;
 
 public sealed class HtmlReportGenerator : IReportGenerator
 {
+    private const string CHECKSUM_CODE_OPEN_TAG = "<code style=\"font-family: monospace; font-size: 0.85rem;\">";
+
     public string FileExtension => ".html";
     public string DisplayName => "HTML Audit Certificate";
 
@@ -37,7 +38,7 @@ public sealed class HtmlReportGenerator : IReportGenerator
             OverallSafetyStatus.SafeToFormat => "SAFE TO FORMAT - ALL MEDIA VERIFIED",
             OverallSafetyStatus.PartiallyBackedUp => "PARTIALLY BACKED UP - ATTENTION REQUIRED",
             OverallSafetyStatus.NoMediaFound => "NO MEDIA DETECTED - DO NOT FORMAT",
-            _ => "UNSAFE TO FORMAT - MISSING MEDIA"
+            _ => $"UNSAFE TO FORMAT - {summary.MissingFiles:N0} MISSING, {summary.CorruptFiles:N0} CORRUPT"
         };
 
         sb.AppendLine("<!DOCTYPE html>");
@@ -60,6 +61,8 @@ public sealed class HtmlReportGenerator : IReportGenerator
         sb.AppendLine("    .badge-ok { background: #065f46; color: #34d399; }");
         sb.AppendLine("    .badge-warn { background: #78350f; color: #fbbf24; }");
         sb.AppendLine("    .badge-err { background: #881337; color: #fb7185; }");
+        sb.AppendLine("    .dest-line { margin: 0.15rem 0; }");
+        sb.AppendLine("    .dest-label { font-family: monospace; font-size: 0.85rem; background: #0f172a; padding: 0.1rem 0.3rem; border-radius: 4px; word-break: break-all; }");
         sb.AppendLine("  </style>");
         sb.AppendLine("</head>");
         sb.AppendLine("<body>");
@@ -71,7 +74,10 @@ public sealed class HtmlReportGenerator : IReportGenerator
         sb.AppendLine($"      <div class=\"card\"><div>Total Files</div><div class=\"val\">{summary.TotalFiles:N0}</div></div>");
         sb.AppendLine($"      <div class=\"card\"><div>Total Size</div><div class=\"val\">{(summary.TotalBytes / (1024.0 * 1024.0 * 1024.0)):F2} GB</div></div>");
         sb.AppendLine($"      <div class=\"card\"><div>Verification Mode</div><div class=\"val\" style=\"font-size: 1.1rem;\">{summary.Mode}</div></div>");
-        sb.AppendLine($"      <div class=\"card\"><div>Verified / Missing</div><div class=\"val\">{summary.FullyVerifiedFiles} / {summary.MissingFiles}</div></div>");
+        sb.AppendLine($"      <div class=\"card\"><div>Verified</div><div class=\"val\" style=\"color: #34d399;\">{summary.FullyVerifiedFiles:N0}</div></div>");
+        sb.AppendLine($"      <div class=\"card\"><div>Partial</div><div class=\"val\" style=\"color: #fbbf24;\">{summary.PartiallyVerifiedFiles:N0}</div></div>");
+        sb.AppendLine($"      <div class=\"card\"><div>Missing</div><div class=\"val\" style=\"color: #fb7185;\">{summary.MissingFiles:N0}</div></div>");
+        sb.AppendLine($"      <div class=\"card\"><div>Corrupt</div><div class=\"val\" style=\"color: #fb7185;\">{summary.CorruptFiles:N0}</div></div>");
         sb.AppendLine($"      <div class=\"card\"><div>Timestamp</div><div class=\"val\" style=\"font-size: 0.9rem;\">{summary.TimestampUtc:yyyy-MM-dd HH:mm:ss} UTC</div></div>");
         if (summary.DuplicateAnalysis is not null)
         {
@@ -80,6 +86,8 @@ public sealed class HtmlReportGenerator : IReportGenerator
             sb.AppendLine($"      <div class=\"card\"><div>Multi-Drive Redundant</div><div class=\"val\" style=\"color: #38bdf8;\">{summary.DuplicateAnalysis.CrossDestinationRedundantFileCount:N0} files</div></div>");
         }
         sb.AppendLine("    </div>");
+
+        AppendDestinationsTable(sb, results);
 
         sb.AppendLine("    <h2>Media Verification Details</h2>");
         sb.AppendLine("    <table>");
@@ -97,26 +105,28 @@ public sealed class HtmlReportGenerator : IReportGenerator
 
         foreach (VerificationResultItem item in results)
         {
-            string statusBadge = item.IsFullyVerified
-                ? "<span class=\"badge badge-ok\">Verified</span>"
-                : item.IsPartiallyVerified
-                    ? "<span class=\"badge badge-warn\">Partial</span>"
-                    : "<span class=\"badge badge-err\">Missing</span>";
+            string statusBadge = item.OverallStatus switch
+            {
+                FileOverallStatus.Verified => "<span class=\"badge badge-ok\">Verified</span>",
+                FileOverallStatus.Partial => "<span class=\"badge badge-warn\">Partial</span>",
+                FileOverallStatus.Corrupt => "<span class=\"badge badge-err\">Corrupt</span>",
+                _ => "<span class=\"badge badge-err\">Missing</span>"
+            };
 
             string checksumDisplay = item.SourceFile.FullHash.HasValue
-                ? $"<code style=\"font-family: monospace; font-size: 0.85rem;\">0x{item.SourceFile.FullHash.Value:X16}</code>"
+                ? FormatChecksumCell(item.SourceFile.FullHash.Value, string.Empty)
                 : item.SourceFile.DeepHash.HasValue
-                    ? $"<code style=\"font-family: monospace; font-size: 0.85rem;\">0x{item.SourceFile.DeepHash.Value:X16}</code> (Deep)"
+                    ? FormatChecksumCell(item.SourceFile.DeepHash.Value, " (Deep)")
                     : item.SourceFile.HeadHash.HasValue
-                        ? $"<code style=\"font-family: monospace; font-size: 0.85rem;\">0x{item.SourceFile.HeadHash.Value:X16}</code> (Head)"
+                        ? FormatChecksumCell(item.SourceFile.HeadHash.Value, " (Head)")
                         : "<span style=\"color: #64748b;\">-</span>";
 
-            List<string> destDetails = new();
-            foreach (KeyValuePair<string, FileMatchStatus> kvp in item.DestinationStatuses)
+            StringBuilder destDetails = new();
+            foreach (FileMatchStatus status in item.DestinationStatuses.Values)
             {
-                destDetails.Add($"{WebUtility.HtmlEncode(kvp.Key)}: {kvp.Value.Status}");
+                destDetails.Append(FormatDestinationLine(status));
             }
-            string destText = string.Join(", ", destDetails);
+            string destText = destDetails.ToString();
 
             sb.AppendLine("        <tr>");
             sb.AppendLine($"          <td>{WebUtility.HtmlEncode(item.SourceFile.RelativePath)}</td>");
@@ -182,6 +192,67 @@ public sealed class HtmlReportGenerator : IReportGenerator
 
         await File.WriteAllTextAsync(outputPath, sb.ToString(), Encoding.UTF8, cancellationToken).ConfigureAwait(false);
     }
+
+    private static void AppendDestinationsTable(StringBuilder sb, IReadOnlyList<VerificationResultItem> results)
+    {
+        IReadOnlyList<ReportDestination> destinations = ReportFormatting.CollectDestinations(results);
+        if (destinations.Count == 0)
+        {
+            return;
+        }
+
+        sb.AppendLine("    <h2>Backup Destinations</h2>");
+        sb.AppendLine("    <table>");
+        sb.AppendLine("      <thead>");
+        sb.AppendLine("        <tr>");
+        sb.AppendLine("          <th>Destination</th>");
+        sb.AppendLine("          <th>Verified</th>");
+        sb.AppendLine("          <th>Missing</th>");
+        sb.AppendLine("          <th>Corrupt</th>");
+        sb.AppendLine("        </tr>");
+        sb.AppendLine("      </thead>");
+        sb.AppendLine("      <tbody>");
+        foreach (ReportDestination destination in destinations)
+        {
+            string encodedLabel = WebUtility.HtmlEncode(destination.Label);
+            sb.AppendLine("        <tr>");
+            sb.AppendLine($"          <td style=\"word-break: break-all;\">{encodedLabel}</td>");
+            sb.AppendLine($"          <td>{CountStatus(results, destination.Id, MediaStatus.Verified):N0}</td>");
+            sb.AppendLine($"          <td>{CountStatus(results, destination.Id, MediaStatus.Missing):N0}</td>");
+            sb.AppendLine($"          <td>{CountStatus(results, destination.Id, MediaStatus.Corrupt):N0}</td>");
+            sb.AppendLine("        </tr>");
+        }
+        sb.AppendLine("      </tbody>");
+        sb.AppendLine("    </table>");
+    }
+
+    private static int CountStatus(
+        IReadOnlyList<VerificationResultItem> results,
+        string destinationId,
+        MediaStatus mediaStatus)
+    {
+        int count = 0;
+        foreach (VerificationResultItem item in results)
+        {
+            if (item.DestinationStatuses.TryGetValue(destinationId, out FileMatchStatus? status)
+                && status.Status == mediaStatus)
+            {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    // Root paths can contain ": " and ", ", so each destination gets its own line with the path set apart.
+    private static string FormatDestinationLine(FileMatchStatus status)
+    {
+        string encodedLabel = WebUtility.HtmlEncode(ReportFormatting.GetDestinationLabel(status));
+        return $"<div class=\"dest-line\"><code class=\"dest-label\">{encodedLabel}</code>: {status.Status}</div>";
+    }
+
+    private static string FormatChecksumCell(ulong hash, string suffix) =>
+        $"{CHECKSUM_CODE_OPEN_TAG}{ReportFormatting.FormatHash(hash)}</code>{suffix}";
 
     private static string FormatBytes(long bytes)
     {
