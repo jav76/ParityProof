@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -42,6 +43,24 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     private const string COLOR_IDLE = "#3B82F6"; // Blue
     private const string SAFETY_BADGE_INPUTS_CHANGED = "INPUTS CHANGED - RE-VERIFY BEFORE FORMATTING";
 
+    private static readonly OperationBadgeTexts _verificationBadges = new(
+        RunningText: "VERIFICATION IN PROGRESS",
+        RunningColor: "#0284C7",
+        PausedText: "VERIFICATION PAUSED",
+        PausedStatusMessage: "Operation paused.");
+
+    private static readonly OperationBadgeTexts _duplicateAuditBadges = new(
+        RunningText: "DUPLICATE AUDIT IN PROGRESS",
+        RunningColor: "#D97706",
+        PausedText: "DUPLICATE AUDIT PAUSED",
+        PausedStatusMessage: "Operation paused.");
+
+    private static readonly OperationBadgeTexts _backupCopyBadges = new(
+        RunningText: "BACKUP COPY IN PROGRESS",
+        RunningColor: "#0284C7",
+        PausedText: "BACKUP COPY PAUSED",
+        PausedStatusMessage: "Copy paused at file boundary.");
+
     private readonly IVerificationEngine _verificationEngine;
     private readonly IMediaCopier _mediaCopier;
     private readonly IDriveDetector _driveDetector;
@@ -57,6 +76,13 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     private VerificationSummary? _lastSummary;
     private IReadOnlyList<VerificationResultItem> _lastResults = Array.Empty<VerificationResultItem>();
     private int _verificationInputsVersion;
+    private OperationBadgeTexts _activeOperationBadges = _verificationBadges;
+
+    private sealed record OperationBadgeTexts(
+        string RunningText,
+        string RunningColor,
+        string PausedText,
+        string PausedStatusMessage);
 
     public string AppVersionDisplay => BuildInfo.Current.DisplayVersion;
     public string WindowTitle => $"ParityProof - {BuildInfo.Current.DisplayVersion}";
@@ -175,6 +201,9 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     [NotifyPropertyChangedFor(nameof(CanStartOperation))]
     [NotifyPropertyChangedFor(nameof(CanStartCopy))]
     [NotifyCanExecuteChangedFor(nameof(ExportReportCommand))]
+    [NotifyCanExecuteChangedFor(nameof(VerifyCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ScanDuplicatesCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CopyMissingCommand))]
     private bool _isOperationActive;
 
     [ObservableProperty]
@@ -290,9 +319,19 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private bool _hasResults;
 
+    // Missing, partially verified and corrupt files: everything Copy to Backup would transfer.
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasUnprotectedFiles))]
     [NotifyPropertyChangedFor(nameof(CanStartCopy))]
-    private bool _hasMissingFiles;
+    [NotifyPropertyChangedFor(nameof(CopyToBackupButtonText))]
+    [NotifyCanExecuteChangedFor(nameof(CopyMissingCommand))]
+    private int _unprotectedFileCount;
+
+    public bool HasUnprotectedFiles => UnprotectedFileCount > 0;
+
+    public string CopyToBackupButtonText => UnprotectedFileCount == 1
+        ? "COPY TO BACKUP (1 FILE)"
+        : $"COPY TO BACKUP ({UnprotectedFileCount} FILES)";
 
     [ObservableProperty]
     private string _reclaimableSpaceFormatted = "0 B";
@@ -395,7 +434,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     private string _copyEtaText = string.Empty;
 
     public bool CanStartOperation => !IsOperationActive;
-    public bool CanStartCopy => HasMissingFiles && !IsOperationActive;
+    public bool CanStartCopy => HasUnprotectedFiles && !IsOperationActive;
 
     public ObservableRangeCollection<MediaItemViewModel> AllItems { get; } = new();
     public ObservableRangeCollection<MediaItemViewModel> FilteredItems { get; } = new();
@@ -786,7 +825,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         HasDuplicates = false;
         HasDuplicateGroups = false;
         HasResults = false;
-        HasMissingFiles = false;
+        UnprotectedFileCount = 0;
 
         if (!hadResults)
         {
@@ -1107,18 +1146,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
             CanPauseResume = true;
             PauseResumeButtonText = "⏸ PAUSE";
             PauseResumeButtonBackground = "#D97706";
-            StateBadgeText = "RUNNING";
-            StateBadgeBackground = "#064E3B";
-            StateBadgeForeground = "#10B981";
-            SafetyBadgeText = OperationTitle switch
-            {
-                "MEDIA VERIFICATION" => "VERIFICATION IN PROGRESS",
-                "DUPLICATE STORAGE AUDIT" => "DUPLICATE AUDIT IN PROGRESS",
-                "BACKUP COPY TRANSFER" => "BACKUP COPY IN PROGRESS",
-                _ => "IN PROGRESS"
-            };
-            SafetyBadgeColor = "#0284C7";
-            StatusMessage = "Operation resumed.";
+            ApplyRunningUiState("Operation resumed.");
             _operationStopwatch.Start();
             _pauseTokenSource.Resume();
         }
@@ -1164,9 +1192,75 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         RequestCancel();
     }
 
-    [RelayCommand]
+    // Commands are disabled while an operation runs, but a caller that skips CanExecute must still not start a
+    // second operation: it would replace the shared cancellation and pause sources and orphan the first one.
+    private bool IsAnotherOperationActive(string requestedOperation)
+    {
+        if (!IsOperationActive)
+        {
+            return false;
+        }
+
+        _logger.Warning(
+            "Ignoring {RequestedOperation} request while {ActiveOperation} is still running",
+            requestedOperation,
+            OperationTitle);
+        return true;
+    }
+
+    [MemberNotNull(nameof(_cts), nameof(_pauseTokenSource))]
+    private void StartOperationTokens()
+    {
+        _cts?.Dispose();
+        _cts = new CancellationTokenSource();
+        _pauseTokenSource = new PauseTokenSource();
+    }
+
+    // Progress reports are queued to the UI thread, so one posted before a pause, resume or cancel request can
+    // arrive after it. Only the state the user last asked for is applied.
+    private void ApplyPausedUiState()
+    {
+        if (IsCancelling || _pauseTokenSource is not { IsPaused: true })
+        {
+            return;
+        }
+
+        IsPausing = false;
+        IsPaused = true;
+        CanPauseResume = true;
+        PauseResumeButtonText = "▶ RESUME";
+        PauseResumeButtonBackground = "#059669";
+        StateBadgeText = "PAUSED";
+        StateBadgeBackground = "#78350F";
+        StateBadgeForeground = "#FBBF24";
+        SafetyBadgeText = _activeOperationBadges.PausedText;
+        SafetyBadgeColor = "#D97706";
+        StatusMessage = _activeOperationBadges.PausedStatusMessage;
+    }
+
+    private void ApplyRunningUiState(string statusMessage)
+    {
+        if (IsPausing || IsPaused || IsCancelling)
+        {
+            return;
+        }
+
+        StateBadgeText = "RUNNING";
+        StateBadgeBackground = "#064E3B";
+        StateBadgeForeground = "#10B981";
+        SafetyBadgeText = _activeOperationBadges.RunningText;
+        SafetyBadgeColor = _activeOperationBadges.RunningColor;
+        StatusMessage = statusMessage;
+    }
+
+    [RelayCommand(CanExecute = nameof(CanStartOperation))]
     private async Task VerifyAsync()
     {
+        if (IsAnotherOperationActive("verification"))
+        {
+            return;
+        }
+
         string trimmedSource = SourcePath?.Trim() ?? string.Empty;
         if (string.IsNullOrWhiteSpace(trimmedSource))
         {
@@ -1217,8 +1311,9 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         StateBadgeText = "RUNNING";
         StateBadgeBackground = "#064E3B";
         StateBadgeForeground = "#10B981";
-        SafetyBadgeText = "VERIFICATION IN PROGRESS";
-        SafetyBadgeColor = "#0284C7";
+        _activeOperationBadges = _verificationBadges;
+        SafetyBadgeText = _activeOperationBadges.RunningText;
+        SafetyBadgeColor = _activeOperationBadges.RunningColor;
         StatusMessage = "Scanning source and destination directories...";
         PauseResumeButtonText = "⏸ PAUSE";
         PauseResumeButtonBackground = "#D97706";
@@ -1249,8 +1344,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         CurrentProgressPhase = "Scanning Source Directory...";
         CurrentFileDetailText = "Traversing file tree...";
 
-        _cts = new CancellationTokenSource();
-        _pauseTokenSource = new PauseTokenSource();
+        StartOperationTokens();
         _operationStopwatch.Restart();
         _elapsedTimer.Start();
 
@@ -1272,27 +1366,11 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
                 CurrentProgressPhase = p.Phase;
                 if (p.IsPaused)
                 {
-                    IsPausing = false;
-                    IsPaused = true;
-                    CanPauseResume = true;
-                    IsBatchIndeterminate = false;
-                    PauseResumeButtonText = "▶ RESUME";
-                    PauseResumeButtonBackground = "#059669";
-                    StateBadgeText = "PAUSED";
-                    StateBadgeBackground = "#78350F";
-                    StateBadgeForeground = "#FBBF24";
-                    SafetyBadgeText = "VERIFICATION PAUSED";
-                    SafetyBadgeColor = "#D97706";
-                    StatusMessage = "Operation paused.";
+                    ApplyPausedUiState();
                 }
-                else if (!IsPausing && !IsCancelling)
+                else
                 {
-                    StateBadgeText = "RUNNING";
-                    StateBadgeBackground = "#064E3B";
-                    StateBadgeForeground = "#10B981";
-                    SafetyBadgeText = "VERIFICATION IN PROGRESS";
-                    SafetyBadgeColor = "#0284C7";
-                    StatusMessage = p.Phase;
+                    ApplyRunningUiState(p.Phase);
                 }
 
                 if (p.TotalFiles > 0)
@@ -1455,7 +1533,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
             }
 
             HasResults = true;
-            HasMissingFiles = summary.MissingFiles > 0;
+            UnprotectedFileCount = summary.MissingFiles + summary.PartiallyVerifiedFiles + summary.CorruptFiles;
             StatusMessage = $"Verification complete: {VerifiedCount} verified, {MissingCount} missing in {DurationFormatted}.";
 
             OperationTitle = "VERIFICATION COMPLETE";
@@ -1484,16 +1562,16 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
                 summary.SafetyStatus);
 
             // Refresh destination capacities and check for potential space exhaustion
-            long missingBytes = results
+            long unprotectedBytes = results
                 .Where(r => !r.IsFullyVerified)
                 .Sum(r => r.SourceFile.FileLength);
 
             foreach (BackupDestinationViewModel dest in Destinations)
             {
                 dest.RefreshCapacity();
-                if (HasMissingFiles)
+                if (HasUnprotectedFiles)
                 {
-                    dest.CheckRequiredSpace(missingBytes);
+                    dest.CheckRequiredSpace(unprotectedBytes);
                 }
             }
         }
@@ -1580,9 +1658,14 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         SafetyBadgeColor = auditOutcomeColor;
     }
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanStartOperation))]
     private async Task ScanDuplicatesAsync()
     {
+        if (IsAnotherOperationActive("duplicate audit"))
+        {
+            return;
+        }
+
         string trimmedSource = SourcePath?.Trim() ?? string.Empty;
         if (string.IsNullOrWhiteSpace(trimmedSource))
         {
@@ -1625,11 +1708,12 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         OperationTitle = "DUPLICATE STORAGE AUDIT";
         OperationAccentColor = "#F59E0B";
         DisplayedScanMode = FormatScanMode(SelectedMode);
-        StateBadgeText = "SCANNING";
-        StateBadgeBackground = "#78350F";
-        StateBadgeForeground = "#FBBF24";
-        SafetyBadgeText = "DUPLICATE AUDIT IN PROGRESS";
-        SafetyBadgeColor = "#D97706";
+        StateBadgeText = "RUNNING";
+        StateBadgeBackground = "#064E3B";
+        StateBadgeForeground = "#10B981";
+        _activeOperationBadges = _duplicateAuditBadges;
+        SafetyBadgeText = _activeOperationBadges.RunningText;
+        SafetyBadgeColor = _activeOperationBadges.RunningColor;
         StatusMessage = "Scanning destination directories for duplicate media...";
         PauseResumeButtonText = "⏸ PAUSE";
         PauseResumeButtonBackground = "#D97706";
@@ -1643,8 +1727,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         CurrentProgressPhase = "Scanning Destination Directories...";
         CurrentFileDetailText = "Traversing destination file trees...";
 
-        _cts = new CancellationTokenSource();
-        _pauseTokenSource = new PauseTokenSource();
+        StartOperationTokens();
         _operationStopwatch.Restart();
         _elapsedTimer.Start();
 
@@ -1660,15 +1743,11 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
                 CurrentProgressPhase = p.Phase;
                 if (p.IsPaused)
                 {
-                    SafetyBadgeText = "DUPLICATE AUDIT PAUSED";
-                    SafetyBadgeColor = "#D97706";
-                    StatusMessage = "Operation paused.";
+                    ApplyPausedUiState();
                 }
-                else if (!IsPausing && !IsCancelling)
+                else
                 {
-                    SafetyBadgeText = "DUPLICATE AUDIT IN PROGRESS";
-                    SafetyBadgeColor = "#D97706";
-                    StatusMessage = p.Phase;
+                    ApplyRunningUiState(p.Phase);
                 }
 
                 if (!string.IsNullOrEmpty(p.CurrentFile))
@@ -1867,9 +1946,14 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         }
     }
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanStartCopy))]
     private async Task CopyMissingAsync()
     {
+        if (IsAnotherOperationActive("backup copy"))
+        {
+            return;
+        }
+
         if (_lastSummary is null || _lastResults.Count == 0 || Destinations.Count == 0)
         {
             return;
@@ -1891,18 +1975,18 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
             }
         }
 
-        List<MediaFile> missingFiles = _lastResults
+        List<MediaFile> unprotectedFiles = _lastResults
             .Where(r => !r.IsFullyVerified)
             .Select(r => r.SourceFile)
             .ToList();
 
-        if (missingFiles.Count == 0)
+        if (unprotectedFiles.Count == 0)
         {
-            StatusMessage = "No missing files to copy.";
+            StatusMessage = "No unprotected files to copy.";
             return;
         }
 
-        long requiredBytes = missingFiles.Sum(f => f.FileLength);
+        long requiredBytes = unprotectedFiles.Sum(f => f.FileLength);
         foreach (BackupDestinationViewModel dest in activeDestinations)
         {
             dest.RefreshCapacity();
@@ -1928,9 +2012,10 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         StateBadgeText = "RUNNING";
         StateBadgeBackground = "#064E3B";
         StateBadgeForeground = "#10B981";
-        SafetyBadgeText = "BACKUP COPY IN PROGRESS";
-        SafetyBadgeColor = "#0284C7";
-        StatusMessage = "Transferring missing media files...";
+        _activeOperationBadges = _backupCopyBadges;
+        SafetyBadgeText = _activeOperationBadges.RunningText;
+        SafetyBadgeColor = _activeOperationBadges.RunningColor;
+        StatusMessage = "Transferring unprotected media files...";
         PauseResumeButtonText = "⏸ PAUSE";
         PauseResumeButtonBackground = "#D97706";
         BatchProgressPercentage = 0;
@@ -1956,18 +2041,17 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         ThroughputText = "0.0 MB/s";
         _etaSmoother.Reset();
         EtaText = _etaSmoother.CurrentEtaText;
-        FilesCounterText = $"0 / {missingFiles.Count}";
+        FilesCounterText = $"0 / {unprotectedFiles.Count}";
         CurrentProgressPhase = "Starting copy transfer...";
         CurrentFileDetailText = "Preparing file streams...";
 
-        _cts = new CancellationTokenSource();
-        _pauseTokenSource = new PauseTokenSource();
+        StartOperationTokens();
         _operationStopwatch.Restart();
         _elapsedTimer.Start();
 
         _logger.Information(
-            "Starting copy of {MissingCount} missing files across {DestCount} destinations",
-            missingFiles.Count,
+            "Starting copy of {UnprotectedCount} unprotected files across {DestCount} destinations",
+            unprotectedFiles.Count,
             activeDestinations.Count);
 
         List<string> targetPaths = activeDestinations.Select(d => d.RootPath).ToList();
@@ -1978,26 +2062,11 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
             {
                 if (p.IsPaused)
                 {
-                    IsPausing = false;
-                    IsPaused = true;
-                    CanPauseResume = true;
-                    PauseResumeButtonText = "▶ RESUME";
-                    PauseResumeButtonBackground = "#059669";
-                    StateBadgeText = "PAUSED";
-                    StateBadgeBackground = "#78350F";
-                    StateBadgeForeground = "#FBBF24";
-                    SafetyBadgeText = "BACKUP COPY PAUSED";
-                    SafetyBadgeColor = "#D97706";
-                    StatusMessage = "Copy paused at file boundary.";
+                    ApplyPausedUiState();
                 }
-                else if (!IsPausing && !IsCancelling)
+                else
                 {
-                    StateBadgeText = "RUNNING";
-                    StateBadgeBackground = "#064E3B";
-                    StateBadgeForeground = "#10B981";
-                    SafetyBadgeText = "BACKUP COPY IN PROGRESS";
-                    SafetyBadgeColor = "#0284C7";
-                    StatusMessage = $"Copying ({p.FilesCompleted}/{p.TotalFiles}): {p.CurrentFileName}";
+                    ApplyRunningUiState($"Copying ({p.FilesCompleted}/{p.TotalFiles}): {p.CurrentFileName}");
                 }
 
                 CurrentProgressPhase = $"Copying: {p.CurrentFileName}";
@@ -2049,7 +2118,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
             });
 
             int copiedCount = await Task.Run(() => _mediaCopier.CopyMissingFilesAsync(
-                missingFiles,
+                unprotectedFiles,
                 targetPaths,
                 copyProgress,
                 _cts.Token,
@@ -2059,12 +2128,14 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
             StatusMessage = $"Copied and verified {copiedCount} files. Re-running verification...";
 
             _logger.Information(
-                "Successfully copied and verified {CopiedCount} missing files",
+                "Successfully copied and verified {CopiedCount} unprotected files",
                 copiedCount);
         }
         catch (OperationCanceledException)
         {
-            _logger.Information("File copy cancelled by user for {FileCount} missing files", missingFiles.Count);
+            _logger.Information(
+                "File copy cancelled by user for {FileCount} unprotected files",
+                unprotectedFiles.Count);
             SafetyBadgeText = "BACKUP COPY CANCELLED";
             SafetyBadgeColor = "#7F1D1D";
             StatusMessage = "File copy cancelled by user.";
@@ -2077,7 +2148,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         {
             _logger.Error(
                 ex,
-                "Failed to copy missing files to destinations: {Destinations}",
+                "Failed to copy unprotected files to destinations: {Destinations}",
                 string.Join(", ", targetPaths));
             SafetyBadgeText = "BACKUP COPY FAILED";
             SafetyBadgeColor = "#7F1D1D";
