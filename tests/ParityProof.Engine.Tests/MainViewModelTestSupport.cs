@@ -148,11 +148,16 @@ internal sealed class GatedVerificationEngine : IVerificationEngine
 }
 
 /// <summary>
-/// Real duplicate analyzer behind an <see cref="OperationGate"/>, for holding a standalone duplicate audit open.
+/// Real duplicate analyzer behind an <see cref="OperationGate"/>, for holding a duplicate audit open. The
+/// harness uses it for the standalone audit and for "scan for duplicates during verification".
+/// <see cref="Entered"/> completes with the caller's progress sink when the analyzer is first called, before
+/// the gate.
 /// </summary>
 internal sealed class GatedDuplicateAnalyzer : IDuplicateAnalyzer
 {
     private readonly IDuplicateAnalyzer _inner;
+    private readonly TaskCompletionSource<IProgress<VerificationProgress>?> _entered =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public GatedDuplicateAnalyzer(IDuplicateAnalyzer inner)
     {
@@ -160,6 +165,8 @@ internal sealed class GatedDuplicateAnalyzer : IDuplicateAnalyzer
     }
 
     public OperationGate Gate { get; } = new();
+
+    public Task<IProgress<VerificationProgress>?> Entered => _entered.Task;
 
     public async Task<DuplicateAnalysisResult> AnalyzeDuplicatesAsync(
         IReadOnlyList<MediaFile> sourceFiles,
@@ -170,6 +177,7 @@ internal sealed class GatedDuplicateAnalyzer : IDuplicateAnalyzer
         CancellationToken cancellationToken = default,
         PauseToken pauseToken = default)
     {
+        _entered.TrySetResult(progress);
         await Gate.PassAsync(cancellationToken).ConfigureAwait(false);
 
         return await _inner.AnalyzeDuplicatesAsync(
@@ -185,7 +193,7 @@ internal sealed class GatedDuplicateAnalyzer : IDuplicateAnalyzer
 
 /// <summary>
 /// Temp card and backup directories plus a MainViewModel wired to a gated real verifier and a gated real
-/// duplicate analyzer for the standalone audit.
+/// duplicate analyzer.
 /// </summary>
 internal sealed class VerdictTestHarness : IDisposable
 {
@@ -206,9 +214,8 @@ internal sealed class VerdictTestHarness : IDisposable
         Directory.CreateDirectory(CardDir);
         Directory.CreateDirectory(BackupDir);
 
-        DuplicateAnalyzer duplicateAnalyzer = new();
-        Engine = new GatedVerificationEngine(duplicateAnalyzer);
-        DuplicateAudit = new GatedDuplicateAnalyzer(duplicateAnalyzer);
+        DuplicateAudit = new GatedDuplicateAnalyzer(new DuplicateAnalyzer());
+        Engine = new GatedVerificationEngine(DuplicateAudit);
         ViewModel = new MainViewModel(Engine, DuplicateAudit);
     }
 
@@ -267,7 +274,7 @@ internal sealed class VerdictTestHarness : IDisposable
     {
         MainViewModel vm = ViewModel;
         Assert.False(vm.HasResults);
-        Assert.False(vm.HasMissingFiles);
+        Assert.False(vm.HasUnprotectedFiles);
         Assert.False(vm.CanStartCopy);
         Assert.DoesNotContain(SAFE_BADGE_PREFIX, vm.SafetyBadgeText);
         Assert.NotEqual(COLOR_SAFE, vm.SafetyBadgeColor);
