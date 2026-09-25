@@ -1972,6 +1972,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
 
         List<string> targetPaths = activeDestinations.Select(d => d.RootPath).ToList();
         bool copySucceeded = false;
+        string? copyFailureText = null;
         try
         {
             Progress<CopyProgressInfo> copyProgress = new(p =>
@@ -2048,19 +2049,51 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
                 }
             });
 
-            int copiedCount = await Task.Run(() => _mediaCopier.CopyMissingFilesAsync(
+            CopyBatchResult copyResult = await Task.Run(() => _mediaCopier.CopyMissingFilesAsync(
                 missingFiles,
                 targetPaths,
                 copyProgress,
                 _cts.Token,
                 _pauseTokenSource.Token)).ConfigureAwait(true);
 
+            // Re-verification runs even after partial failures so the results show what actually landed.
             copySucceeded = true;
-            StatusMessage = $"Copied and verified {copiedCount} files. Re-running verification...";
+            int completedCount = copyResult.CopiedCount + copyResult.SkippedCount;
+            if (copyResult.FailedFileCount == 0)
+            {
+                StatusMessage = $"Copied and verified {completedCount} files. Re-running verification...";
 
-            _logger.Information(
-                "Successfully copied and verified {CopiedCount} missing files",
-                copiedCount);
+                _logger.Information(
+                    "Successfully copied and verified {CopiedCount} missing files",
+                    completedCount);
+            }
+            else
+            {
+                // Failures are per destination, so name each one that missed files: a failing secondary stick
+                // must not read as if the primary destination received nothing.
+                List<string> destinationShortfalls = new();
+                foreach (IGrouping<string, CopyFailure> destinationFailures in copyResult.Failures
+                    .GroupBy(failure => failure.DestinationRootPath, StringComparer.OrdinalIgnoreCase))
+                {
+                    BackupDestinationViewModel? failedDestination = activeDestinations.FirstOrDefault(d =>
+                        string.Equals(d.RootPath, destinationFailures.Key, StringComparison.OrdinalIgnoreCase));
+                    destinationShortfalls.Add(
+                        $"{destinationFailures.Count()} of {missingFiles.Count} files not copied to " +
+                        $"'{failedDestination?.Name ?? destinationFailures.Key}'");
+                }
+
+                copyFailureText = $"Copy incomplete: {string.Join("; ", destinationShortfalls)}.";
+                StatusMessage = $"{copyFailureText} Re-running verification...";
+
+                _logger.Warning(
+                    "Copy finished with {FailedFileCount} of {MissingCount} files not copied to every destination " +
+                    "({CopiedCount} copied, {SkippedCount} already present): {DestinationShortfalls}",
+                    copyResult.FailedFileCount,
+                    missingFiles.Count,
+                    copyResult.CopiedCount,
+                    copyResult.SkippedCount,
+                    destinationShortfalls);
+            }
         }
         catch (OperationCanceledException)
         {
@@ -2106,6 +2139,11 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         if (copySucceeded)
         {
             await VerifyAsync();
+
+            if (copyFailureText is not null)
+            {
+                StatusMessage = $"{copyFailureText} {StatusMessage}";
+            }
         }
     }
 
