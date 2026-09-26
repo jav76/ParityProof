@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Win32.SafeHandles;
 
 namespace ParityProof.Engine.Transfer;
 
@@ -61,6 +62,39 @@ internal sealed class PendingDestinationWrite
         {
             WriteError = ex;
         }
+    }
+
+    // Set before the flush so the timestamps (QA-006) reach the drive with the data. A default value is left unset.
+    public void SetTimestamps(DateTime lastWriteTimeUtc, DateTime creationTimeUtc)
+    {
+        SafeFileHandle handle = Stream!.SafeFileHandle;
+        if (lastWriteTimeUtc != default)
+        {
+            File.SetLastWriteTimeUtc(handle, lastWriteTimeUtc);
+        }
+
+        if (creationTimeUtc != default)
+        {
+            File.SetCreationTimeUtc(handle, creationTimeUtc);
+        }
+    }
+
+    // Runs on the thread pool so every destination's drive flushes at the same time. Like WriteChunkAsync, it
+    // captures the error in WriteError instead of throwing.
+    public Task FlushToDiskAsync(ICopyCommitOperations commitOperations)
+    {
+        FileStream stream = Stream!;
+        return Task.Run(() =>
+        {
+            try
+            {
+                commitOperations.FlushToDisk(stream);
+            }
+            catch (Exception ex)
+            {
+                WriteError = ex;
+            }
+        });
     }
 
     public async Task CloseStreamAsync()

@@ -22,6 +22,8 @@ public sealed class MediaCopierTests : IDisposable
 {
     private const string TEMP_FILE_EXTENSION = ".parityproof.tmp";
     private const long OVERSIZED_FILE_LENGTH = 1L << 60;
+    private const string INJECTED_FLUSH_ERROR = "Injected flush failure";
+    private const int PARALLEL_FLUSH_TIMEOUT_MS = 10_000;
 
     private readonly string _testDir;
     private readonly MediaCopier _copier = new();
@@ -1064,6 +1066,234 @@ public sealed class MediaCopierTests : IDisposable
         Assert.Empty(Directory.GetFileSystemEntries(dstDir2));
     }
 
+    [Fact]
+    public async Task CopyMissingFilesAsync_FlushesEachDestinationBeforeReadBackAndRename()
+    {
+        string dstDir1 = Path.Combine(_testDir, "durable_dst1");
+        string dstDir2 = Path.Combine(_testDir, "durable_dst2");
+        Directory.CreateDirectory(dstDir1);
+        Directory.CreateDirectory(dstDir2);
+
+        byte[] payload = CreateRandomPayload(256 * 1024);
+        MediaFile sourceFile = CreateSourceFile("durable_src", "DCIM/100CANON/IMG_0001.CR3", payload);
+        RecordingCommitOperations commitOperations = new();
+
+        CopyBatchResult copyResult = await new MediaCopier(commitOperations).CopyMissingFilesAsync(
+            new[] { sourceFile },
+            new List<string> { dstDir1, dstDir2 });
+
+        Assert.Equal(1, copyResult.CopiedCount);
+        foreach (string dstDir in new[] { dstDir1, dstDir2 })
+        {
+            string finalPath = Path.GetFullPath(Path.Combine(dstDir, sourceFile.RelativePath));
+            string tempPath = finalPath + TEMP_FILE_EXTENSION;
+            string folderPath = Path.GetDirectoryName(finalPath)!;
+
+            // The new DCIM/100CANON folders are linked into their parents first. The read-back must see what the
+            // drive holds, not dirty pages in RAM, and the file only counts as copied once its new folder entry is
+            // on the drive too.
+            Assert.Equal(
+                new[]
+                {
+                    new CommitStep(CommitStepKind.FlushDirectory, Path.GetDirectoryName(folderPath)!),
+                    new CommitStep(CommitStepKind.FlushDirectory, Path.GetFullPath(dstDir)),
+                    new CommitStep(CommitStepKind.FlushToDisk, tempPath),
+                    new CommitStep(CommitStepKind.ReadBack, tempPath),
+                    new CommitStep(CommitStepKind.Rename, finalPath),
+                    new CommitStep(CommitStepKind.FlushDirectory, folderPath),
+                },
+                commitOperations.GetStepsUnder(dstDir));
+            Assert.Equal(payload, File.ReadAllBytes(finalPath));
+        }
+    }
+
+    [Fact]
+    public async Task CopyMissingFilesAsync_FlushFailure_DoesNotCommit()
+    {
+        string healthyDst = Path.Combine(_testDir, "flush_healthy_dst");
+        string failingDst = Path.Combine(_testDir, "flush_failing_dst");
+        Directory.CreateDirectory(healthyDst);
+        Directory.CreateDirectory(failingDst);
+
+        byte[] payload = CreateRandomPayload(96 * 1024);
+        MediaFile sourceFile = CreateSourceFile("flush_src", "DCIM/100CANON/IMG_0002.CR3", payload);
+        RecordingCommitOperations commitOperations = new()
+        {
+            ShouldFail = step => step.Kind == CommitStepKind.FlushToDisk && IsAtOrUnder(step.Path, failingDst),
+        };
+
+        CopyBatchResult copyResult = await new MediaCopier(commitOperations).CopyMissingFilesAsync(
+            new[] { sourceFile },
+            new List<string> { healthyDst, failingDst });
+
+        // Data the drive never confirmed is not read back or moved into place, and its temp file is removed.
+        string failingPath = Path.Combine(failingDst, sourceFile.RelativePath);
+        Assert.False(File.Exists(failingPath));
+        Assert.False(File.Exists(failingPath + TEMP_FILE_EXTENSION));
+        Assert.Equal(
+            new[] { CommitStepKind.FlushDirectory, CommitStepKind.FlushDirectory, CommitStepKind.FlushToDisk },
+            commitOperations.GetStepsUnder(failingDst).Select(step => step.Kind));
+
+        Assert.Equal(payload, File.ReadAllBytes(Path.Combine(healthyDst, sourceFile.RelativePath)));
+        Assert.Equal(0, copyResult.CopiedCount);
+        Assert.Equal(1, copyResult.FailedFileCount);
+        CopyFailure failure = Assert.Single(copyResult.Failures);
+        Assert.Equal(failingDst, failure.DestinationRootPath);
+        Assert.Equal(INJECTED_FLUSH_ERROR, failure.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task CopyMissingFilesAsync_DirectoryFlushFailure_RemovesCopyAndReportsFailure()
+    {
+        string healthyDst = Path.Combine(_testDir, "dirflush_healthy_dst");
+        string failingDst = Path.Combine(_testDir, "dirflush_failing_dst");
+        Directory.CreateDirectory(healthyDst);
+        Directory.CreateDirectory(failingDst);
+
+        byte[] payload = CreateRandomPayload(96 * 1024);
+        MediaFile sourceFile = CreateSourceFile("dirflush_src", "DCIM/100CANON/IMG_0003.CR3", payload);
+        string failingFolder = Path.GetFullPath(Path.Combine(failingDst, "DCIM", "100CANON"));
+        RecordingCommitOperations commitOperations = new()
+        {
+            ShouldFail = step => step.Kind == CommitStepKind.FlushDirectory && step.Path == failingFolder,
+        };
+
+        CopyBatchResult copyResult = await new MediaCopier(commitOperations).CopyMissingFilesAsync(
+            new[] { sourceFile },
+            new List<string> { healthyDst, failingDst });
+
+        // The renamed copy is taken back out, so the verification that follows a copy cannot count a file whose
+        // folder entry may be lost when the drive is unplugged.
+        Assert.Equal(
+            new[]
+            {
+                CommitStepKind.FlushDirectory,
+                CommitStepKind.FlushDirectory,
+                CommitStepKind.FlushToDisk,
+                CommitStepKind.ReadBack,
+                CommitStepKind.Rename,
+                CommitStepKind.FlushDirectory,
+            },
+            commitOperations.GetStepsUnder(failingDst).Select(step => step.Kind));
+        Assert.Empty(Directory.GetFiles(failingDst, "*", SearchOption.AllDirectories));
+
+        Assert.Equal(payload, File.ReadAllBytes(Path.Combine(healthyDst, sourceFile.RelativePath)));
+        Assert.Equal(0, copyResult.CopiedCount);
+        Assert.Equal(1, copyResult.FailedFileCount);
+        CopyFailure failure = Assert.Single(copyResult.Failures);
+        Assert.Equal(failingDst, failure.DestinationRootPath);
+        Assert.Equal(INJECTED_FLUSH_ERROR, failure.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task CopyMissingFilesAsync_NewFolderFlushFailure_SkipsFileAndRetriesForNextFile()
+    {
+        string dstDir = Path.Combine(_testDir, "newfolder_dst");
+        Directory.CreateDirectory(dstDir);
+
+        byte[] firstPayload = CreateRandomPayload(32 * 1024);
+        byte[] secondPayload = CreateRandomPayload(48 * 1024);
+        MediaFile firstFile = CreateSourceFile("newfolder_src", "DCIM/100CANON/IMG_0004.CR3", firstPayload);
+        MediaFile secondFile = CreateSourceFile("newfolder_src", "DCIM/100CANON/IMG_0005.CR3", secondPayload);
+
+        string rootPath = Path.GetFullPath(dstDir);
+        string dcimPath = Path.Combine(rootPath, "DCIM");
+        string folderPath = Path.Combine(dcimPath, "100CANON");
+        int rootFlushCount = 0;
+        RecordingCommitOperations commitOperations = new()
+        {
+            // Only the first flush of the folder that holds the new DCIM entry fails.
+            ShouldFail = step => step.Kind == CommitStepKind.FlushDirectory
+                && step.Path == rootPath
+                && ++rootFlushCount == 1,
+        };
+
+        CopyBatchResult copyResult = await new MediaCopier(commitOperations).CopyMissingFilesAsync(
+            new[] { firstFile, secondFile },
+            dstDir);
+
+        // Nothing is written below a new folder whose entry the drive has not confirmed. The next file retries
+        // that flush instead of trusting the folder because it now exists.
+        string secondFinalPath = Path.Combine(folderPath, "IMG_0005.CR3");
+        string secondTempPath = secondFinalPath + TEMP_FILE_EXTENSION;
+        Assert.Equal(
+            new[]
+            {
+                new CommitStep(CommitStepKind.FlushDirectory, dcimPath),
+                new CommitStep(CommitStepKind.FlushDirectory, rootPath),
+                new CommitStep(CommitStepKind.FlushDirectory, rootPath),
+                new CommitStep(CommitStepKind.FlushToDisk, secondTempPath),
+                new CommitStep(CommitStepKind.ReadBack, secondTempPath),
+                new CommitStep(CommitStepKind.Rename, secondFinalPath),
+                new CommitStep(CommitStepKind.FlushDirectory, folderPath),
+            },
+            commitOperations.GetStepsUnder(dstDir));
+
+        Assert.False(File.Exists(Path.Combine(folderPath, "IMG_0004.CR3")));
+        Assert.Equal(secondPayload, File.ReadAllBytes(secondFinalPath));
+        Assert.Equal(1, copyResult.CopiedCount);
+        Assert.Equal(1, copyResult.FailedFileCount);
+        CopyFailure failure = Assert.Single(copyResult.Failures);
+        Assert.Equal(firstFile.RelativePath, failure.RelativePath);
+        Assert.Equal(INJECTED_FLUSH_ERROR, failure.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task CopyMissingFilesAsync_SetsTimestampsBeforeFlush()
+    {
+        string dstDir = Path.Combine(_testDir, "stamp_dst");
+        Directory.CreateDirectory(dstDir);
+
+        MediaFile writtenFile = CreateSourceFile("stamp_src", "IMG_0006.JPG", CreateRandomPayload(16 * 1024));
+        DateTime historicLastWrite = new(2022, 8, 1, 9, 15, 0, DateTimeKind.Utc);
+        File.SetLastWriteTimeUtc(writtenFile.FullPath, historicLastWrite);
+        MediaFile sourceFile = writtenFile with { LastWriteTimeUtc = historicLastWrite };
+        RecordingCommitOperations commitOperations = new();
+
+        CopyBatchResult copyResult = await new MediaCopier(commitOperations).CopyMissingFilesAsync(
+            new[] { sourceFile },
+            dstDir);
+
+        // Setting them after the flush would leave dirty metadata behind once the copy is reported safe, and an
+        // unplug could revert the time that a later quick verify compares.
+        Assert.Equal(1, copyResult.CopiedCount);
+        DateTime lastWriteAtFlush = Assert.Single(commitOperations.GetLastWriteTimesAtFlush());
+        Assert.True(
+            Math.Abs((lastWriteAtFlush - historicLastWrite).TotalSeconds) < 2,
+            $"Expected LastWriteTimeUtc near {historicLastWrite:O} at the flush but got {lastWriteAtFlush:O}");
+    }
+
+    [Fact]
+    public async Task CopyMissingFilesAsync_FlushesDestinationsInParallel()
+    {
+        string dstDir1 = Path.Combine(_testDir, "parallel_dst1");
+        string dstDir2 = Path.Combine(_testDir, "parallel_dst2");
+        Directory.CreateDirectory(dstDir1);
+        Directory.CreateDirectory(dstDir2);
+
+        MediaFile sourceFile = CreateSourceFile("parallel_src", "IMG_0007.CR3", CreateRandomPayload(64 * 1024));
+        using Barrier bothFlushing = new(participantCount: 2);
+        bool flushesOverlapped = true;
+        RecordingCommitOperations commitOperations = new()
+        {
+            OnFlushToDisk = () =>
+            {
+                if (!bothFlushing.SignalAndWait(PARALLEL_FLUSH_TIMEOUT_MS))
+                {
+                    flushesOverlapped = false;
+                }
+            },
+        };
+
+        CopyBatchResult copyResult = await new MediaCopier(commitOperations).CopyMissingFilesAsync(
+            new[] { sourceFile },
+            new List<string> { dstDir1, dstDir2 });
+
+        // One slow drive must not add its whole flush time to every other destination's.
+        Assert.True(flushesOverlapped, "The destinations were flushed one after another.");
+        Assert.Equal(1, copyResult.CopiedCount);
+    }
+
     private MediaFile CreateSourceFile(string sourceFolderName, string relativePath, byte[] payload)
     {
         string sourcePath = Path.Combine(_testDir, sourceFolderName, relativePath);
@@ -1164,6 +1394,100 @@ public sealed class MediaCopierTests : IDisposable
         public void Report(T value)
         {
             _handler(value);
+        }
+    }
+
+    private enum CommitStepKind
+    {
+        FlushToDisk,
+        ReadBack,
+        Rename,
+        FlushDirectory,
+    }
+
+    private sealed record CommitStep(CommitStepKind Kind, string Path);
+
+    private static bool IsAtOrUnder(string fullPath, string root)
+    {
+        string rootPath = Path.GetFullPath(root);
+        return string.Equals(fullPath, rootPath, StringComparison.Ordinal)
+            || fullPath.StartsWith(rootPath + Path.DirectorySeparatorChar, StringComparison.Ordinal);
+    }
+
+    // Records each commit step, then runs the real one unless ShouldFail picks it. Destinations flush in parallel,
+    // so recording is locked.
+    private sealed class RecordingCommitOperations : ICopyCommitOperations
+    {
+        private readonly DurableCommitOperations _inner = new();
+        private readonly List<CommitStep> _steps = new();
+        private readonly List<DateTime> _lastWriteTimesAtFlush = new();
+        private readonly object _gate = new();
+
+        public Func<CommitStep, bool>? ShouldFail { get; init; }
+
+        public Action? OnFlushToDisk { get; init; }
+
+        public void FlushToDisk(FileStream tempStream)
+        {
+            Record(CommitStepKind.FlushToDisk, tempStream.Name);
+            DateTime lastWriteTimeUtc = File.GetLastWriteTimeUtc(tempStream.SafeFileHandle);
+            lock (_gate)
+            {
+                _lastWriteTimesAtFlush.Add(lastWriteTimeUtc);
+            }
+
+            OnFlushToDisk?.Invoke();
+            _inner.FlushToDisk(tempStream);
+        }
+
+        public (ulong HeadHash, ulong TailHash) ReadBackHeadTail(string tempPath)
+        {
+            Record(CommitStepKind.ReadBack, tempPath);
+            return _inner.ReadBackHeadTail(tempPath);
+        }
+
+        public void Rename(string tempPath, string finalPath)
+        {
+            Record(CommitStepKind.Rename, finalPath);
+            _inner.Rename(tempPath, finalPath);
+        }
+
+        public void FlushDirectory(string directoryPath)
+        {
+            Record(CommitStepKind.FlushDirectory, directoryPath);
+            _inner.FlushDirectory(directoryPath);
+        }
+
+        public IReadOnlyList<CommitStep> GetStepsUnder(string destinationRoot)
+        {
+            lock (_gate)
+            {
+                return _steps
+                    .Where(step => IsAtOrUnder(step.Path, destinationRoot))
+                    .ToList();
+            }
+        }
+
+        public IReadOnlyList<DateTime> GetLastWriteTimesAtFlush()
+        {
+            lock (_gate)
+            {
+                return _lastWriteTimesAtFlush.ToList();
+            }
+        }
+
+        private void Record(CommitStepKind kind, string path)
+        {
+            CommitStep step = new(kind, Path.GetFullPath(path));
+            lock (_gate)
+            {
+                _steps.Add(step);
+            }
+
+            if (ShouldFail?.Invoke(step) == true)
+            {
+                throw new IOException(INJECTED_FLUSH_ERROR);
+            }
         }
     }
 
