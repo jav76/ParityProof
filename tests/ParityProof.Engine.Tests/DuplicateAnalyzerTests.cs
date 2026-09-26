@@ -408,6 +408,54 @@ public sealed class DuplicateAnalyzerTests : IDisposable
         Assert.Equal(0L, result.TotalReclaimableBytes);
     }
 
+    [Theory]
+    [InlineData(VerificationMode.Quick, "^0x[0-9A-F]{16}_0x[0-9A-F]{16}$")]
+    [InlineData(VerificationMode.Deep, "^0x[0-9A-F]{16}$")]
+    [InlineData(VerificationMode.Full, "^0x[0-9A-F]{16}$")]
+    public async Task AnalyzeDuplicatesAsync_HashBasedGroupKeys_UsePrefixedUppercaseHex(
+        VerificationMode mode,
+        string expectedKeyPattern)
+    {
+        string destDir = Path.Combine(_testDir, "dest_group_key_" + mode);
+        Directory.CreateDirectory(destDir);
+
+        byte[] content = new byte[256 * 1024];
+        Random.Shared.NextBytes(content);
+
+        string file1 = Path.Combine(destDir, "IMG_0001.CR3");
+        string file2 = Path.Combine(destDir, "IMG_0001_copy.CR3");
+        File.WriteAllBytes(file1, content);
+        File.WriteAllBytes(file2, content);
+
+        List<BackupDestination> destinations = new()
+        {
+            new BackupDestination("d1", "Dest 1", destDir)
+        };
+
+        Dictionary<string, IReadOnlyList<MediaFile>> destinationFiles = new()
+        {
+            ["d1"] = new List<MediaFile>
+            {
+                new("IMG_0001.CR3", file1, content.Length, DateTime.UtcNow, MediaCategory.PhotoRaw),
+                new("IMG_0001_copy.CR3", file2, content.Length, DateTime.UtcNow, MediaCategory.PhotoRaw)
+            }
+        };
+
+        List<MediaFile> sourceFiles = new()
+        {
+            new("IMG_0001.CR3", file1, content.Length, DateTime.UtcNow, MediaCategory.PhotoRaw)
+        };
+
+        DuplicateAnalysisResult result = await _analyzer.AnalyzeDuplicatesAsync(
+            sourceFiles,
+            destinations,
+            destinationFiles,
+            mode);
+
+        DuplicateGroup group = Assert.Single(result.Groups);
+        Assert.Matches(expectedKeyPattern, group.GroupKey);
+    }
+
     [Fact]
     public async Task AnalyzeDuplicatesAsync_SuperFastMode_UsesMetadataAndSizeOnly()
     {

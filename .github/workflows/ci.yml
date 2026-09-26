@@ -3,8 +3,8 @@ name: CI
 on:
   push:
     branches: [ master, main ]
+  # No base-branch filter, so stacked PRs that target another feature branch are checked too.
   pull_request:
-    branches: [ master, main ]
 
 permissions:
   contents: read

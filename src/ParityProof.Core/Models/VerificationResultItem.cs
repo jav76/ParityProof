@@ -30,4 +30,13 @@ public sealed class VerificationResultItem
 
     public bool HasAnyCorruption =>
         DestinationStatuses.Values.Any(status => status.Status == MediaStatus.Corrupt);
+
+    // Mirrors the counting precedence in MultiDestinationVerifier so per-file labels add up to the summary totals.
+    public FileOverallStatus OverallStatus => this switch
+    {
+        { HasAnyCorruption: true } => FileOverallStatus.Corrupt,
+        { IsFullyVerified: true } => FileOverallStatus.Verified,
+        { IsPartiallyVerified: true } => FileOverallStatus.Partial,
+        _ => FileOverallStatus.Missing
+    };
 }

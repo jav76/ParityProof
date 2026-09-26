@@ -165,7 +165,7 @@ public sealed class EnumToBooleanConverterTests
     }
 
     [Fact]
-    public void MainViewModel_SelectedMode_PreservesDisplayedScanMode_WhenResultsPresent()
+    public void MainViewModel_SelectedMode_WhenResultsPresent_ClearsResultsAndShowsNewMode()
     {
         using MainViewModel vm = new();
         vm.SelectedMode = VerificationMode.SuperFast;
@@ -175,7 +175,8 @@ public sealed class EnumToBooleanConverterTests
 
         vm.SelectedMode = VerificationMode.Full;
 
-        Assert.Equal("Super-Fast", vm.DisplayedScanMode);
+        Assert.False(vm.HasResults);
+        Assert.Equal("Full", vm.DisplayedScanMode);
         Assert.Equal(VerificationMode.Full, vm.SelectedMode);
     }
 
@@ -210,9 +211,11 @@ public sealed class EnumToBooleanConverterTests
             Assert.Equal("Super-Fast", vm.DisplayedScanMode);
 
             vm.SelectedMode = VerificationMode.Full;
-            Assert.Equal("Super-Fast", vm.DisplayedScanMode);
+            Assert.False(vm.HasResults);
+            Assert.Equal("Full", vm.DisplayedScanMode);
 
             await vm.VerifyCommand.ExecuteAsync(null);
+            Assert.True(vm.HasResults);
             Assert.Equal("Full", vm.DisplayedScanMode);
         }
         finally
