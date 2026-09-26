@@ -161,14 +161,14 @@ public sealed class OperationPauseCancelTests : IDisposable
             }
         });
 
-        int copied = await _copier.CopyMissingFilesAsync(
+        CopyBatchResult copyResult = await _copier.CopyMissingFilesAsync(
             files,
             dstDir,
             progress,
             CancellationToken.None,
             pauseSource.Token);
 
-        Assert.Equal(3, copied);
+        Assert.Equal(3, copyResult.CopiedCount);
         Assert.True(pausedReported);
 
         foreach (MediaFile f in files)

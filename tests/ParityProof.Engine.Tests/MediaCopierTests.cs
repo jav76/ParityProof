@@ -20,6 +20,9 @@ namespace ParityProof.Engine.Tests;
 [Collection("SerilogTestCollection")]
 public sealed class MediaCopierTests : IDisposable
 {
+    private const string TEMP_FILE_EXTENSION = ".parityproof.tmp";
+    private const long OVERSIZED_FILE_LENGTH = 1L << 60;
+
     private readonly string _testDir;
     private readonly MediaCopier _copier = new();
 
@@ -51,11 +54,11 @@ public sealed class MediaCopierTests : IDisposable
             LastWriteTimeUtc: DateTime.UtcNow,
             Category: MediaCategory.PhotoRaw);
 
-        int copied = await _copier.CopyMissingFilesAsync(
+        CopyBatchResult copyResult = await _copier.CopyMissingFilesAsync(
             new[] { missingFile },
             dstDir);
 
-        Assert.Equal(1, copied);
+        Assert.Equal(1, copyResult.CopiedCount);
 
         string expectedDstPath = Path.Combine(dstDir, "SUBDIR", "PHOTO_01.CR3");
         Assert.True(File.Exists(expectedDstPath));
@@ -85,11 +88,11 @@ public sealed class MediaCopierTests : IDisposable
             LastWriteTimeUtc: historicLastWrite,
             Category: MediaCategory.PhotoStandard);
 
-        int copied = await _copier.CopyMissingFilesAsync(
+        CopyBatchResult copyResult = await _copier.CopyMissingFilesAsync(
             new[] { mediaFile },
             dstDir);
 
-        Assert.Equal(1, copied);
+        Assert.Equal(1, copyResult.CopiedCount);
 
         string expectedDstPath = Path.Combine(dstDir, "IMG_HISTORIC.JPG");
         Assert.True(File.Exists(expectedDstPath));
@@ -129,11 +132,11 @@ public sealed class MediaCopierTests : IDisposable
 
         List<string> targetDestinations = new() { dstDir1, dstDir2, dstDir3 };
 
-        int copied = await _copier.CopyMissingFilesAsync(
+        CopyBatchResult copyResult = await _copier.CopyMissingFilesAsync(
             new[] { missingFile },
             targetDestinations);
 
-        Assert.Equal(1, copied);
+        Assert.Equal(1, copyResult.CopiedCount);
 
         foreach (string destDir in targetDestinations)
         {
@@ -166,11 +169,11 @@ public sealed class MediaCopierTests : IDisposable
             LastWriteTimeUtc: DateTime.UtcNow,
             Category: MediaCategory.PhotoStandard);
 
-        int copied = await _copier.CopyMissingFilesAsync(
+        CopyBatchResult copyResult = await _copier.CopyMissingFilesAsync(
             new[] { missingFile },
             dstDir);
 
-        Assert.Equal(1, copied);
+        Assert.Equal(1, copyResult.CopiedCount);
         string expectedPath = Path.Combine(dstDir, "THUMB.JPG");
         Assert.True(File.Exists(expectedPath));
         Assert.Equal(payload.Length, new FileInfo(expectedPath).Length);
@@ -296,12 +299,13 @@ public sealed class MediaCopierTests : IDisposable
         SynchronousProgress<CopyProgressInfo> progress = new(info => finalProgress = info);
         using WarningCapture warnings = new();
 
-        int copied = await _copier.CopyMissingFilesAsync(
+        CopyBatchResult copyResult = await _copier.CopyMissingFilesAsync(
             new[] { sourceFile },
             dstDir,
             progress);
 
-        Assert.Equal(1, copied);
+        Assert.Equal(1, copyResult.CopiedCount);
+        Assert.Equal(1, copyResult.RenamedCopyCount);
         Assert.Equal(archivedPayload, File.ReadAllBytes(archivedPath));
         string siblingPath = AssertSingleSiblingHoldsPayload(dstFolder, archivedPath, sourcePayload);
         Assert.Equal("IMG_0001_1.CR3", Path.GetFileName(siblingPath));
@@ -336,11 +340,11 @@ public sealed class MediaCopierTests : IDisposable
 
         MediaFile sourceFile = CreateSourceFile("same_size_src", "DCIM/100CANON/IMG_0001.CR3", sourcePayload);
 
-        int copied = await _copier.CopyMissingFilesAsync(
+        CopyBatchResult copyResult = await _copier.CopyMissingFilesAsync(
             new[] { sourceFile },
             dstDir);
 
-        Assert.Equal(1, copied);
+        Assert.Equal(1, copyResult.CopiedCount);
         Assert.Equal(archivedPayload, File.ReadAllBytes(archivedPath));
         AssertSingleSiblingHoldsPayload(dstFolder, archivedPath, sourcePayload);
     }
@@ -358,11 +362,11 @@ public sealed class MediaCopierTests : IDisposable
         byte[] sourcePayload = CreateRandomPayload(128 * 1024);
         MediaFile sourceFile = CreateSourceFile("case_src", "img_1.cr3", sourcePayload);
 
-        int copied = await _copier.CopyMissingFilesAsync(
+        CopyBatchResult copyResult = await _copier.CopyMissingFilesAsync(
             new[] { sourceFile },
             dstDir);
 
-        Assert.Equal(1, copied);
+        Assert.Equal(1, copyResult.CopiedCount);
         Assert.Equal(archivedPayload, File.ReadAllBytes(archivedPath));
         AssertSingleSiblingHoldsPayload(dstDir, archivedPath, sourcePayload);
     }
@@ -384,12 +388,14 @@ public sealed class MediaCopierTests : IDisposable
         SynchronousProgress<CopyProgressInfo> progress = new(info => finalProgress = info);
         using WarningCapture warnings = new();
 
-        int copied = await _copier.CopyMissingFilesAsync(
+        CopyBatchResult copyResult = await _copier.CopyMissingFilesAsync(
             new[] { sourceFile },
             dstDir,
             progress);
 
-        Assert.Equal(1, copied);
+        Assert.Equal(0, copyResult.CopiedCount);
+        Assert.Equal(1, copyResult.SkippedCount);
+        Assert.Empty(copyResult.Failures);
         Assert.Equal(existingPath, Assert.Single(Directory.GetFiles(dstFolder)));
         Assert.Equal(payload, File.ReadAllBytes(existingPath));
         Assert.NotNull(finalProgress);
@@ -415,11 +421,12 @@ public sealed class MediaCopierTests : IDisposable
 
         MediaFile sourceFile = CreateSourceFile("gap_src", "IMG_0001.CR3", sourcePayload);
 
-        int copied = await _copier.CopyMissingFilesAsync(
+        CopyBatchResult copyResult = await _copier.CopyMissingFilesAsync(
             new[] { sourceFile },
             dstDir);
 
-        Assert.Equal(1, copied);
+        Assert.Equal(0, copyResult.CopiedCount);
+        Assert.Equal(1, copyResult.SkippedCount);
         Assert.Equal(
             new[] { archivedPath, laterSiblingPath }.Order(StringComparer.Ordinal),
             Directory.GetFiles(dstDir).Order(StringComparer.Ordinal));
@@ -444,11 +451,12 @@ public sealed class MediaCopierTests : IDisposable
         await _copier.CopyMissingFilesAsync(
             new[] { sourceFile },
             dstDir);
-        int copiedAgain = await _copier.CopyMissingFilesAsync(
+        CopyBatchResult secondResult = await _copier.CopyMissingFilesAsync(
             new[] { sourceFile },
             dstDir);
 
-        Assert.Equal(1, copiedAgain);
+        Assert.Equal(0, secondResult.CopiedCount);
+        Assert.Equal(1, secondResult.SkippedCount);
         Assert.Equal(archivedPayload, File.ReadAllBytes(archivedPath));
         AssertSingleSiblingHoldsPayload(dstFolder, archivedPath, sourcePayload);
     }
@@ -471,12 +479,12 @@ public sealed class MediaCopierTests : IDisposable
         CopyProgressInfo? finalProgress = null;
         SynchronousProgress<CopyProgressInfo> progress = new(info => finalProgress = info);
 
-        int copied = await _copier.CopyMissingFilesAsync(
+        CopyBatchResult copyResult = await _copier.CopyMissingFilesAsync(
             new[] { sourceFile },
             new List<string> { dstWithCollision, dstClean },
             progress);
 
-        Assert.Equal(1, copied);
+        Assert.Equal(1, copyResult.CopiedCount);
         Assert.NotNull(finalProgress);
         Assert.Equal(1, finalProgress.RenamedCopyCount);
         Assert.Equal(archivedPayload, File.ReadAllBytes(archivedPath));
@@ -504,12 +512,13 @@ public sealed class MediaCopierTests : IDisposable
         CopyProgressInfo? finalProgress = null;
         SynchronousProgress<CopyProgressInfo> progress = new(info => finalProgress = info);
 
-        int copied = await _copier.CopyMissingFilesAsync(
+        CopyBatchResult copyResult = await _copier.CopyMissingFilesAsync(
             new[] { sourceFile },
             dstDir,
             progress);
 
-        Assert.Equal(1, copied);
+        Assert.Equal(1, copyResult.CopiedCount);
+        Assert.Equal(1, copyResult.RenamedCopyCount);
         Assert.True(Directory.Exists(occupyingFolder));
         Assert.Equal(nestedPath, Assert.Single(Directory.GetFileSystemEntries(occupyingFolder)));
         Assert.Equal(nestedPayload, File.ReadAllBytes(nestedPath));
@@ -552,12 +561,15 @@ public sealed class MediaCopierTests : IDisposable
         CopyProgressInfo? finalProgress = null;
         SynchronousProgress<CopyProgressInfo> progress = new(info => finalProgress = info);
 
-        int copied = await _copier.CopyMissingFilesAsync(
+        CopyBatchResult copyResult = await _copier.CopyMissingFilesAsync(
             sourceFiles,
             dstDir,
             progress);
 
-        Assert.Equal(FILE_COUNT, copied);
+        Assert.Equal(FILE_COUNT - 1, copyResult.CopiedCount);
+        Assert.Equal(1, copyResult.SkippedCount);
+        Assert.Empty(copyResult.Failures);
+        Assert.Equal(FILE_COUNT - 1, copyResult.RenamedCopyCount);
         Assert.NotNull(finalProgress);
         Assert.Equal(FILE_COUNT - 1, finalProgress.RenamedCopyCount);
         Assert.Equal(
@@ -581,11 +593,11 @@ public sealed class MediaCopierTests : IDisposable
         MediaFile upperFile = CreateSourceFile("case_batch_src_a", "IMG_1.CR3", upperPayload);
         MediaFile lowerFile = CreateSourceFile("case_batch_src_b", "img_1.cr3", lowerPayload);
 
-        int copied = await _copier.CopyMissingFilesAsync(
+        CopyBatchResult copyResult = await _copier.CopyMissingFilesAsync(
             new[] { upperFile, lowerFile },
             dstDir);
 
-        Assert.Equal(2, copied);
+        Assert.Equal(2, copyResult.CopiedCount);
         string[] writtenFiles = Directory.GetFiles(dstDir);
         Assert.Equal(2, writtenFiles.Length);
         Assert.Contains(writtenFiles, path => File.ReadAllBytes(path).AsSpan().SequenceEqual(upperPayload));
@@ -617,12 +629,12 @@ public sealed class MediaCopierTests : IDisposable
         });
         using WarningCapture warnings = new();
 
-        int copied = await _copier.CopyMissingFilesAsync(
+        CopyBatchResult copyResult = await _copier.CopyMissingFilesAsync(
             new[] { sourceFile },
             dstDir,
             progress);
 
-        Assert.Equal(1, copied);
+        Assert.Equal(1, copyResult.CopiedCount);
         Assert.True(intruderWritten);
         Assert.Equal(intruderPayload, File.ReadAllBytes(targetPath));
         string siblingPath = AssertSingleSiblingHoldsPayload(dstDir, targetPath, sourcePayload);
@@ -673,11 +685,11 @@ public sealed class MediaCopierTests : IDisposable
             .Select(result => result.SourceFile)
             .ToList();
 
-        int copied = await _copier.CopyMissingFilesAsync(
+        CopyBatchResult copyResult = await _copier.CopyMissingFilesAsync(
             missingFiles,
             ssdDir);
 
-        Assert.Equal(1, copied);
+        Assert.Equal(1, copyResult.CopiedCount);
         Assert.Equal(archivedPayload, File.ReadAllBytes(archivedPath));
 
         (VerificationSummary secondSummary, _) = await verifier.VerifyAsync(
@@ -688,6 +700,368 @@ public sealed class MediaCopierTests : IDisposable
 
         Assert.Equal(OverallSafetyStatus.SafeToFormat, secondSummary.SafetyStatus);
         Assert.Equal(archivedPayload, File.ReadAllBytes(archivedPath));
+    }
+
+    [Fact]
+    public async Task CopyMissingFilesAsync_UnreadableSourceFile_ContinuesWithRemainingFiles()
+    {
+        string dstDir = Path.Combine(_testDir, "unreadable_dst");
+        Directory.CreateDirectory(dstDir);
+
+        MediaFile unreadableFile = CreateSourceFile(
+            "unreadable_src",
+            "DCIM/100CANON/IMG_0012.CR3",
+            CreateRandomPayload(96 * 1024));
+        byte[] readablePayload = CreateRandomPayload(128 * 1024);
+        MediaFile readableFile = CreateSourceFile("unreadable_src", "DCIM/100CANON/IMG_0013.CR3", readablePayload);
+        File.Delete(unreadableFile.FullPath);
+
+        CopyProgressInfo? finalProgress = null;
+        SynchronousProgress<CopyProgressInfo> progress = new(info => finalProgress = info);
+
+        CopyBatchResult copyResult = await _copier.CopyMissingFilesAsync(
+            new[] { unreadableFile, readableFile },
+            dstDir,
+            progress);
+
+        Assert.Equal(1, copyResult.CopiedCount);
+        Assert.Equal(1, copyResult.FailedFileCount);
+        CopyFailure failure = Assert.Single(copyResult.Failures);
+        Assert.Equal(unreadableFile.RelativePath, failure.RelativePath);
+        Assert.Equal(dstDir, failure.DestinationRootPath);
+
+        // The final report must not claim the failed file was verified.
+        Assert.NotNull(finalProgress);
+        Assert.Equal(1, finalProgress.FilesCompleted);
+        StageProgressInfo verifyStage = Assert.Single(
+            finalProgress.Stages!,
+            stage => stage.Id == PipelineStageId.PostTransferVerify);
+        Assert.Equal("1 / 2 files verified", verifyStage.ProgressText);
+
+        Assert.Equal(readablePayload, File.ReadAllBytes(Path.Combine(dstDir, readableFile.RelativePath)));
+        Assert.Equal(
+            Path.Combine(dstDir, readableFile.RelativePath),
+            Assert.Single(Directory.GetFiles(dstDir, "*", SearchOption.AllDirectories)));
+    }
+
+    [Fact]
+    public async Task CopyMissingFilesAsync_UnreadableSourceDuringSkipCheck_ContinuesAndPreservesExistingFile()
+    {
+        string dstDir = Path.Combine(_testDir, "skipcheck_dst");
+        string dstFolder = Path.Combine(dstDir, "DCIM", "100CANON");
+        Directory.CreateDirectory(dstFolder);
+
+        byte[] unreadablePayload = CreateRandomPayload(96 * 1024);
+        MediaFile unreadableFile = CreateSourceFile("skipcheck_src", "DCIM/100CANON/IMG_0012.CR3", unreadablePayload);
+        byte[] readablePayload = CreateRandomPayload(128 * 1024);
+        MediaFile readableFile = CreateSourceFile("skipcheck_src", "DCIM/100CANON/IMG_0013.CR3", readablePayload);
+
+        // A same-length file at the target path forces a head/tail read of the source before any stream opens.
+        byte[] archivedPayload = CreateRandomPayload(unreadablePayload.Length);
+        string archivedPath = Path.Combine(dstFolder, "IMG_0012.CR3");
+        File.WriteAllBytes(archivedPath, archivedPayload);
+
+        // An exclusive lock makes every read of the source fail, like a card with a bad sector.
+        using FileStream sourceLock = new(unreadableFile.FullPath, FileMode.Open, FileAccess.Read, FileShare.None);
+
+        CopyBatchResult copyResult = await _copier.CopyMissingFilesAsync(
+            new[] { unreadableFile, readableFile },
+            dstDir);
+
+        Assert.Equal(1, copyResult.CopiedCount);
+        CopyFailure failure = Assert.Single(copyResult.Failures);
+        Assert.Equal(unreadableFile.RelativePath, failure.RelativePath);
+
+        Assert.Equal(readablePayload, File.ReadAllBytes(Path.Combine(dstFolder, "IMG_0013.CR3")));
+        Assert.Equal(archivedPayload, File.ReadAllBytes(archivedPath));
+        Assert.Equal(2, Directory.GetFiles(dstFolder).Length);
+    }
+
+    [Fact]
+    public async Task CopyMissingFilesAsync_UnreadableSourceDuringSiblingCheck_ContinuesAndPreservesExistingFiles()
+    {
+        string dstDir = Path.Combine(_testDir, "siblingcheck_dst");
+        string dstFolder = Path.Combine(dstDir, "DCIM", "100CANON");
+        Directory.CreateDirectory(dstFolder);
+
+        byte[] unreadablePayload = CreateRandomPayload(96 * 1024);
+        MediaFile unreadableFile = CreateSourceFile(
+            "siblingcheck_src",
+            "DCIM/100CANON/IMG_0012.CR3",
+            unreadablePayload);
+        byte[] readablePayload = CreateRandomPayload(128 * 1024);
+        MediaFile readableFile = CreateSourceFile(
+            "siblingcheck_src",
+            "DCIM/100CANON/IMG_0013.CR3",
+            readablePayload);
+
+        // The target path holds a different-length file, so only the same-length renamed sibling forces a
+        // head/tail read of the source.
+        byte[] archivedPayload = CreateRandomPayload(64 * 1024);
+        string archivedPath = Path.Combine(dstFolder, "IMG_0012.CR3");
+        File.WriteAllBytes(archivedPath, archivedPayload);
+        byte[] siblingPayload = CreateRandomPayload(unreadablePayload.Length);
+        string siblingPath = Path.Combine(dstFolder, "IMG_0012_1.CR3");
+        File.WriteAllBytes(siblingPath, siblingPayload);
+
+        using FileStream sourceLock = new(unreadableFile.FullPath, FileMode.Open, FileAccess.Read, FileShare.None);
+
+        CopyBatchResult copyResult = await _copier.CopyMissingFilesAsync(
+            new[] { unreadableFile, readableFile },
+            dstDir);
+
+        Assert.Equal(1, copyResult.CopiedCount);
+        Assert.Equal(1, copyResult.FailedFileCount);
+        CopyFailure failure = Assert.Single(copyResult.Failures);
+        Assert.Equal(unreadableFile.RelativePath, failure.RelativePath);
+
+        Assert.Equal(readablePayload, File.ReadAllBytes(Path.Combine(dstFolder, "IMG_0013.CR3")));
+        Assert.Equal(archivedPayload, File.ReadAllBytes(archivedPath));
+        Assert.Equal(siblingPayload, File.ReadAllBytes(siblingPath));
+        Assert.Equal(3, Directory.GetFiles(dstFolder).Length);
+    }
+
+    [Fact]
+    public async Task CopyMissingFilesAsync_OneDestinationFails_OtherDestinationReceivesAllFiles()
+    {
+        string healthyDst = Path.Combine(_testDir, "healthy_dst");
+        Directory.CreateDirectory(healthyDst);
+
+        // A destination root nested under a regular file can never be created on any platform.
+        string blockerFilePath = Path.Combine(_testDir, "blocker.bin");
+        File.WriteAllBytes(blockerFilePath, CreateRandomPayload(16));
+        string brokenDst = Path.Combine(blockerFilePath, "backup");
+
+        List<(MediaFile File, byte[] Payload)> sources = new();
+        for (int i = 1; i <= 3; i++)
+        {
+            byte[] payload = CreateRandomPayload(64 * 1024 + i);
+            sources.Add((CreateSourceFile("broken_dest_src", $"DCIM/100CANON/IMG_000{i}.CR3", payload), payload));
+        }
+
+        using WarningCapture logCapture = new();
+
+        CopyBatchResult copyResult = await _copier.CopyMissingFilesAsync(
+            sources.Select(source => source.File).ToList(),
+            new List<string> { healthyDst, brokenDst });
+
+        foreach ((MediaFile file, byte[] payload) in sources)
+        {
+            Assert.Equal(payload, File.ReadAllBytes(Path.Combine(healthyDst, file.RelativePath)));
+        }
+
+        Assert.Equal(0, copyResult.CopiedCount);
+        Assert.Equal(sources.Count, copyResult.FailedFileCount);
+        Assert.Equal(sources.Count, copyResult.Failures.Count);
+        Assert.All(copyResult.Failures, failure => Assert.Equal(brokenDst, failure.DestinationRootPath));
+        Assert.Equal(
+            sources.Select(source => source.File.RelativePath),
+            copyResult.Failures.Select(failure => failure.RelativePath));
+
+        // The unreachable root is left out after its first failure, so the later files are neither attempted nor
+        // logged again (an unplugged stick must not log one stack trace per remaining file).
+        string firstErrorMessage = copyResult.Failures[0].ErrorMessage;
+        Assert.All(
+            copyResult.Failures.Skip(1),
+            failure => Assert.NotEqual(firstErrorMessage, failure.ErrorMessage));
+        Assert.Single(copyResult.Failures.Skip(1).Select(failure => failure.ErrorMessage).Distinct());
+        Assert.Single(logCapture.GetErrors());
+    }
+
+    [LinuxSpecialFileFact(LinuxSpecialFileFactAttribute.DEV_FULL_PATH)]
+    public async Task CopyMissingFilesAsync_DestinationFullDuringWrite_OtherDestinationAndLaterFilesThatFitStillCopied()
+    {
+        string healthyDst = Path.Combine(_testDir, "full_healthy_dst");
+        string fullDst = Path.Combine(_testDir, "full_dst");
+        Directory.CreateDirectory(healthyDst);
+        Directory.CreateDirectory(fullDst);
+
+        byte[] firstPayload = CreateRandomPayload(256 * 1024);
+        MediaFile firstFile = CreateSourceFile("full_src", "IMG_0001.CR3", firstPayload);
+        byte[] secondPayload = CreateRandomPayload(128 * 1024);
+        MediaFile secondFile = CreateSourceFile("full_src", "IMG_0002.CR3", secondPayload);
+
+        // The copier streams into <target>.parityproof.tmp; pointing that at /dev/full makes the fan-out write
+        // for this destination fail with ENOSPC mid-transfer while the healthy destination keeps writing.
+        File.CreateSymbolicLink(
+            Path.Combine(fullDst, "IMG_0001.CR3" + TEMP_FILE_EXTENSION),
+            LinuxSpecialFileFactAttribute.DEV_FULL_PATH);
+
+        CopyBatchResult copyResult = await _copier.CopyMissingFilesAsync(
+            new[] { firstFile, secondFile },
+            new List<string> { healthyDst, fullDst });
+
+        Assert.Equal(firstPayload, File.ReadAllBytes(Path.Combine(healthyDst, "IMG_0001.CR3")));
+        Assert.Equal(secondPayload, File.ReadAllBytes(Path.Combine(healthyDst, "IMG_0002.CR3")));
+
+        // The temp volume still has room for IMG_0002, so the ENOSPC on IMG_0001 does not leave it out.
+        Assert.Equal(secondPayload, File.ReadAllBytes(Path.Combine(fullDst, "IMG_0002.CR3")));
+        Assert.Equal(Path.Combine(fullDst, "IMG_0002.CR3"), Assert.Single(Directory.GetFileSystemEntries(fullDst)));
+        Assert.Equal(1, copyResult.CopiedCount);
+        Assert.Equal(1, copyResult.FailedFileCount);
+        CopyFailure failure = Assert.Single(copyResult.Failures);
+        Assert.Equal("IMG_0001.CR3", failure.RelativePath);
+        Assert.Equal(fullDst, failure.DestinationRootPath);
+    }
+
+    [LinuxSpecialFileFact(LinuxSpecialFileFactAttribute.DEV_FULL_PATH)]
+    public async Task CopyMissingFilesAsync_DestinationFull_LeavesOutOnlyFilesLargerThanFreeSpace()
+    {
+        string fullDst = Path.Combine(_testDir, "fit_dst");
+        Directory.CreateDirectory(fullDst);
+
+        MediaFile firstFile = CreateSourceFile("fit_src", "IMG_0001.CR3", CreateRandomPayload(128 * 1024));
+
+        // Its metadata claims more than any disk holds, standing in for a clip larger than the space left.
+        MediaFile oversizedClip = CreateSourceFile("fit_src", "CLIP_0002.MOV", CreateRandomPayload(64 * 1024)) with
+        {
+            FileLength = OVERSIZED_FILE_LENGTH,
+        };
+        byte[] thirdPayload = CreateRandomPayload(96 * 1024);
+        MediaFile thirdFile = CreateSourceFile("fit_src", "IMG_0003.CR3", thirdPayload);
+
+        File.CreateSymbolicLink(
+            Path.Combine(fullDst, "IMG_0001.CR3" + TEMP_FILE_EXTENSION),
+            LinuxSpecialFileFactAttribute.DEV_FULL_PATH);
+
+        CopyBatchResult copyResult = await _copier.CopyMissingFilesAsync(
+            new[] { firstFile, oversizedClip, thirdFile },
+            fullDst);
+
+        Assert.Equal(1, copyResult.CopiedCount);
+        Assert.Equal(2, copyResult.FailedFileCount);
+        Assert.Equal(
+            new[] { "IMG_0001.CR3", "CLIP_0002.MOV" },
+            copyResult.Failures.Select(failure => failure.RelativePath));
+
+        // The clip is left out by the free-space check, not attempted and then failed by size verification.
+        Assert.Contains("free space", copyResult.Failures[1].ErrorMessage, StringComparison.Ordinal);
+        Assert.Equal(thirdPayload, File.ReadAllBytes(Path.Combine(fullDst, "IMG_0003.CR3")));
+        Assert.Equal(Path.Combine(fullDst, "IMG_0003.CR3"), Assert.Single(Directory.GetFileSystemEntries(fullDst)));
+    }
+
+    [Fact]
+    public async Task CopyMissingFilesAsync_UnreadableSourceWithTwoDestinations_FailsFileOncePerDestination()
+    {
+        string dstWithSameLengthFile = Path.Combine(_testDir, "two_dest_source_dst1");
+        string emptyDst = Path.Combine(_testDir, "two_dest_source_dst2");
+        Directory.CreateDirectory(Path.Combine(dstWithSameLengthFile, "DCIM", "101CANON"));
+        Directory.CreateDirectory(emptyDst);
+
+        byte[] unreadablePayload = CreateRandomPayload(96 * 1024);
+        MediaFile unreadableFile = CreateSourceFile(
+            "two_dest_source_src",
+            "DCIM/101CANON/IMG_0012.CR3",
+            unreadablePayload);
+        byte[] readablePayload = CreateRandomPayload(128 * 1024);
+        MediaFile readableFile = CreateSourceFile(
+            "two_dest_source_src",
+            "DCIM/100CANON/IMG_0013.CR3",
+            readablePayload);
+
+        // The same-length file on the first destination forces a head/tail read of the locked source.
+        byte[] archivedPayload = CreateRandomPayload(unreadablePayload.Length);
+        string archivedPath = Path.Combine(dstWithSameLengthFile, "DCIM", "101CANON", "IMG_0012.CR3");
+        File.WriteAllBytes(archivedPath, archivedPayload);
+
+        using FileStream sourceLock = new(unreadableFile.FullPath, FileMode.Open, FileAccess.Read, FileShare.None);
+
+        CopyBatchResult copyResult = await _copier.CopyMissingFilesAsync(
+            new[] { unreadableFile, readableFile },
+            new List<string> { dstWithSameLengthFile, emptyDst });
+
+        Assert.Equal(1, copyResult.CopiedCount);
+        Assert.Equal(1, copyResult.FailedFileCount);
+        Assert.Equal(2, copyResult.Failures.Count);
+        Assert.All(copyResult.Failures, failure => Assert.Equal(unreadableFile.RelativePath, failure.RelativePath));
+        Assert.Equal(
+            new[] { dstWithSameLengthFile, emptyDst },
+            copyResult.Failures.Select(failure => failure.DestinationRootPath));
+
+        Assert.Equal(archivedPayload, File.ReadAllBytes(archivedPath));
+        foreach (string dstDir in new[] { dstWithSameLengthFile, emptyDst })
+        {
+            Assert.Equal(readablePayload, File.ReadAllBytes(Path.Combine(dstDir, readableFile.RelativePath)));
+            Assert.Empty(Directory.GetFiles(dstDir, "*" + TEMP_FILE_EXTENSION, SearchOption.AllDirectories));
+        }
+
+        // The source is read once: its failure stops the file on every destination before the second one is
+        // touched, instead of re-reading a failing card once per destination.
+        Assert.False(Directory.Exists(Path.Combine(emptyDst, "DCIM", "101CANON")));
+    }
+
+    [LinuxSpecialFileFact(LinuxSpecialFileFactAttribute.PROC_SELF_MEM_PATH)]
+    public async Task CopyMissingFilesAsync_SourceReadErrorMidStreamWithTwoDestinations_RemovesTempFilesAndContinues()
+    {
+        string dstDir1 = Path.Combine(_testDir, "eio_dst1");
+        string dstDir2 = Path.Combine(_testDir, "eio_dst2");
+        Directory.CreateDirectory(dstDir1);
+        Directory.CreateDirectory(dstDir2);
+
+        // Opening succeeds, so both temp files are created before the first read fails with EIO.
+        MediaFile badSectorFile = new(
+            RelativePath: "DCIM/100CANON/IMG_0012.CR3",
+            FullPath: LinuxSpecialFileFactAttribute.PROC_SELF_MEM_PATH,
+            FileLength: 96 * 1024,
+            LastWriteTimeUtc: DateTime.UtcNow,
+            Category: MediaCategory.PhotoRaw);
+        byte[] readablePayload = CreateRandomPayload(128 * 1024);
+        MediaFile readableFile = CreateSourceFile("eio_src", "DCIM/100CANON/IMG_0013.CR3", readablePayload);
+
+        using WarningCapture logCapture = new();
+
+        CopyBatchResult copyResult = await _copier.CopyMissingFilesAsync(
+            new[] { badSectorFile, readableFile },
+            new List<string> { dstDir1, dstDir2 });
+
+        Assert.Equal(1, copyResult.CopiedCount);
+        Assert.Equal(1, copyResult.FailedFileCount);
+        Assert.Equal(2, copyResult.Failures.Count);
+        Assert.All(copyResult.Failures, failure => Assert.Equal(badSectorFile.RelativePath, failure.RelativePath));
+        Assert.Equal(new[] { dstDir1, dstDir2 }, copyResult.Failures.Select(failure => failure.DestinationRootPath));
+
+        // One source error is shared by both destinations and logged once, not once per destination.
+        Assert.Single(copyResult.Failures.Select(failure => failure.ErrorMessage).Distinct());
+        Assert.IsAssignableFrom<IOException>(Assert.Single(logCapture.GetErrors()).Exception);
+
+        foreach (string dstDir in new[] { dstDir1, dstDir2 })
+        {
+            string dstFolder = Path.Combine(dstDir, "DCIM", "100CANON");
+            Assert.Equal(readablePayload, File.ReadAllBytes(Path.Combine(dstFolder, "IMG_0013.CR3")));
+            Assert.Equal(Path.Combine(dstFolder, "IMG_0013.CR3"), Assert.Single(Directory.GetFiles(dstFolder)));
+        }
+    }
+
+    [Fact]
+    public async Task CopyMissingFilesAsync_CancelledDuringMultiDestinationCopy_PropagatesAndLeavesNoPartialFiles()
+    {
+        string dstDir1 = Path.Combine(_testDir, "cancel_dst1");
+        string dstDir2 = Path.Combine(_testDir, "cancel_dst2");
+        Directory.CreateDirectory(dstDir1);
+        Directory.CreateDirectory(dstDir2);
+
+        MediaFile sourceFile = CreateSourceFile("cancel_src", "CLIP_0001.MOV", CreateRandomPayload(8 * 1024 * 1024));
+
+        using CancellationTokenSource cts = new();
+        SynchronousProgress<CopyProgressInfo> progress = new(info =>
+        {
+            if (info.CurrentFileCopiedBytes > 0)
+            {
+                cts.Cancel();
+            }
+        });
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+        {
+            await _copier.CopyMissingFilesAsync(
+                new[] { sourceFile },
+                new List<string> { dstDir1, dstDir2 },
+                progress,
+                cts.Token);
+        });
+
+        Assert.Empty(Directory.GetFileSystemEntries(dstDir1));
+        Assert.Empty(Directory.GetFileSystemEntries(dstDir2));
     }
 
     private MediaFile CreateSourceFile(string sourceFolderName, string relativePath, byte[] payload)
@@ -751,6 +1125,13 @@ public sealed class MediaCopierTests : IDisposable
             return _sink.Events
                 .Where(logEvent => logEvent.Level == LogEventLevel.Warning)
                 .Where(logEvent => logEvent.Properties.ContainsKey("ResolvedPath"))
+                .ToList();
+        }
+
+        public IReadOnlyList<LogEvent> GetErrors()
+        {
+            return _sink.Events
+                .Where(logEvent => logEvent.Level == LogEventLevel.Error)
                 .ToList();
         }
 
