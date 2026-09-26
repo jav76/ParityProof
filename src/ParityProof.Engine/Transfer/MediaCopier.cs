@@ -35,6 +35,18 @@ public sealed class MediaCopier : IMediaCopier
     private const string DESTINATION_UNAVAILABLE_MESSAGE =
         "Not copied: this destination could not be reached after an earlier failure in this batch.";
 
+    private readonly ICopyCommitOperations _commitOperations;
+
+    public MediaCopier()
+        : this(new DurableCommitOperations())
+    {
+    }
+
+    internal MediaCopier(ICopyCommitOperations commitOperations)
+    {
+        _commitOperations = commitOperations;
+    }
+
     public Task<CopyBatchResult> CopyMissingFilesAsync(
         IReadOnlyList<MediaFile> missingFiles,
         string destinationRootPath,
@@ -81,6 +93,7 @@ public sealed class MediaCopier : IMediaCopier
         List<CopyFailure> failures = new();
         HashSet<string> fullDestRoots = new(StringComparer.OrdinalIgnoreCase);
         HashSet<string> unavailableDestRoots = new(StringComparer.OrdinalIgnoreCase);
+        HashSet<string> unflushedNewDirectories = new(StringComparer.OrdinalIgnoreCase);
         Stopwatch overallStopwatch = Stopwatch.StartNew();
 
         CollisionSiblingIndex siblingIndex = new();
@@ -262,9 +275,9 @@ public sealed class MediaCopier : IMediaCopier
                             }
 
                             string? dir = Path.GetDirectoryName(targetPath);
-                            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+                            if (!string.IsNullOrEmpty(dir))
                             {
-                                Directory.CreateDirectory(dir);
+                                CreateDirectoryDurably(dir, unflushedNewDirectories);
                             }
 
                             writes.Add(new PendingDestinationWrite(
@@ -456,7 +469,22 @@ public sealed class MediaCopier : IMediaCopier
                                     ? inFlightHeadHash
                                     : SimdHasher.Hash64(tailBuffer.AsSpan(0, tailBufferCount));
 
-                                // Ensure all buffers are committed
+                                DateTime sourceCreationTimeUtc = default;
+                                try
+                                {
+                                    sourceCreationTimeUtc = File.GetCreationTimeUtc(sourceStream.SafeFileHandle);
+                                }
+                                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                                {
+                                    AppLogger.Logger.Warning(
+                                        ex,
+                                        "Failed to read the creation time of source file {SourcePath}",
+                                        file.FullPath);
+                                }
+
+                                // Put every temp file on the drive itself before it is read back. Until then the
+                                // data may only be in RAM, and a flush failure leaves the file uncommitted.
+                                List<Task> flushTasks = new(writes.Count);
                                 foreach (PendingDestinationWrite write in writes)
                                 {
                                     if (!write.IsWriting)
@@ -466,13 +494,36 @@ public sealed class MediaCopier : IMediaCopier
 
                                     try
                                     {
-                                        await write.Stream!.FlushAsync(cancellationToken).ConfigureAwait(false);
-                                        NativeDirectIO.EvictPageCache(write.Stream.SafeFileHandle, 0, 0);
+                                        write.SetTimestamps(file.LastWriteTimeUtc, sourceCreationTimeUtc);
                                     }
                                     catch (Exception ex) when (ex is not OperationCanceledException)
                                     {
-                                        await FailWriteAsync(write, ex, destinationErrors).ConfigureAwait(false);
+                                        AppLogger.Logger.Warning(
+                                            ex,
+                                            "Failed to preserve timestamps for destination file {DestinationPath}",
+                                            write.TargetPath);
                                     }
+
+                                    flushTasks.Add(write.FlushToDiskAsync(_commitOperations));
+                                }
+
+                                await Task.WhenAll(flushTasks).ConfigureAwait(false);
+
+                                foreach (PendingDestinationWrite write in writes)
+                                {
+                                    if (!write.IsWriting)
+                                    {
+                                        continue;
+                                    }
+
+                                    if (write.WriteError is not null)
+                                    {
+                                        await FailWriteAsync(write, write.WriteError, destinationErrors)
+                                            .ConfigureAwait(false);
+                                        continue;
+                                    }
+
+                                    NativeDirectIO.EvictPageCache(write.Stream!.SafeFileHandle, 0, 0);
                                 }
                             }
                             finally
@@ -508,7 +559,7 @@ public sealed class MediaCopier : IMediaCopier
                                         $"Post-copy size verification failed for '{file.RelativePath}' at '{write.TargetPath}'. Expected {file.FileLength} bytes, wrote {tempInfo.Length} bytes.");
                                 }
 
-                                (ulong dstHead, ulong dstTail) = ChunkReader.ComputeHeadTailHash(write.TempPath);
+                                (ulong dstHead, ulong dstTail) = _commitOperations.ReadBackHeadTail(write.TempPath);
                                 if (dstHead != inFlightHeadHash || dstTail != inFlightTailHash)
                                 {
                                     throw new IOException(
@@ -520,36 +571,13 @@ public sealed class MediaCopier : IMediaCopier
                                     write.TargetPath,
                                     write.RequestedPath,
                                     file.FullPath);
+                                FlushDirectoryOrUndoCommit(committedPath);
                                 write.MarkCommitted();
                                 settledDestRoots.Add(write.DestinationRootPath);
                                 siblingIndex.RecordWrittenFile(committedPath);
                                 if (!string.Equals(committedPath, write.RequestedPath, StringComparison.Ordinal))
                                 {
                                     renamedCopyCount++;
-                                }
-
-                                try
-                                {
-                                    if (file.LastWriteTimeUtc != default)
-                                    {
-                                        File.SetLastWriteTimeUtc(committedPath, file.LastWriteTimeUtc);
-                                    }
-
-                                    if (File.Exists(file.FullPath))
-                                    {
-                                        DateTime creationTimeUtc = File.GetCreationTimeUtc(file.FullPath);
-                                        if (creationTimeUtc != default)
-                                        {
-                                            File.SetCreationTimeUtc(committedPath, creationTimeUtc);
-                                        }
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    AppLogger.Logger.Warning(
-                                        ex,
-                                        "Failed to preserve timestamps for destination file {DestinationPath}",
-                                        committedPath);
                                 }
                             }
                             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -776,7 +804,7 @@ public sealed class MediaCopier : IMediaCopier
         return error.HResult == UNIX_ENOSPC;
     }
 
-    private static string CommitWithoutOverwrite(
+    private string CommitWithoutOverwrite(
         string tempPath,
         string targetPath,
         string requestedPath,
@@ -787,7 +815,7 @@ public sealed class MediaCopier : IMediaCopier
         {
             try
             {
-                File.Move(tempPath, candidatePath, overwrite: false);
+                _commitOperations.Rename(tempPath, candidatePath);
                 return candidatePath;
             }
             catch (IOException ex) when (File.Exists(tempPath) && IsPathOccupied(candidatePath))
@@ -812,6 +840,68 @@ public sealed class MediaCopier : IMediaCopier
                     nextPath);
                 candidatePath = nextPath;
             }
+        }
+    }
+
+    // Each folder this batch creates is a new entry in its parent, which an unplug can lose just like a renamed file
+    // (Linux FAT32 does not journal it). Each new folder's parent is flushed, deepest first, before anything is
+    // written below it. A folder whose parent failed to flush stays pending and is retried for the next file.
+    private void CreateDirectoryDurably(string directoryPath, HashSet<string> unflushedNewDirectories)
+    {
+        string fullPath = Path.GetFullPath(directoryPath);
+        if (!Directory.Exists(fullPath))
+        {
+            List<string> missingDirectories = new();
+            string? current = fullPath;
+            while (current is not null && !Directory.Exists(current))
+            {
+                missingDirectories.Add(current);
+                current = Path.GetDirectoryName(current);
+            }
+
+            // Recorded first, so levels created before a failure are still flushed once a later file gets through.
+            unflushedNewDirectories.UnionWith(missingDirectories);
+            Directory.CreateDirectory(fullPath);
+        }
+
+        if (unflushedNewDirectories.Count == 0)
+        {
+            return;
+        }
+
+        for (string? current = fullPath; current is not null; current = Path.GetDirectoryName(current))
+        {
+            if (unflushedNewDirectories.Contains(current))
+            {
+                _commitOperations.FlushDirectory(Path.GetDirectoryName(current)!);
+                unflushedNewDirectories.Remove(current);
+            }
+        }
+    }
+
+    // A rename survives an unplug or power loss only once its folder is flushed. If that fails, the file just moved
+    // into place (always this batch's own copy) is removed again, so the verification after the copy cannot count it.
+    private void FlushDirectoryOrUndoCommit(string committedPath)
+    {
+        try
+        {
+            _commitOperations.FlushDirectory(Path.GetDirectoryName(Path.GetFullPath(committedPath))!);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            try
+            {
+                File.Delete(committedPath);
+            }
+            catch (Exception deleteError) when (deleteError is IOException or UnauthorizedAccessException)
+            {
+                AppLogger.Logger.Warning(
+                    deleteError,
+                    "Could not remove {DestinationPath} after its folder failed to flush to the drive",
+                    committedPath);
+            }
+
+            throw;
         }
     }
 
