@@ -16,4 +16,5 @@ public sealed record CopyProgressInfo(
     bool IsPaused = false,
     IReadOnlyList<StageProgressInfo>? Stages = null,
     SourceTelemetryInfo? SourceTelemetry = null,
-    IReadOnlyList<DestinationTelemetryInfo>? DestinationTelemetries = null);
+    IReadOnlyList<DestinationTelemetryInfo>? DestinationTelemetries = null,
+    int RenamedCopyCount = 0);

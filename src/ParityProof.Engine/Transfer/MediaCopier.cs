@@ -24,6 +24,8 @@ public sealed class MediaCopier : IMediaCopier
     private const int HEAD_TAIL_CHUNK_SIZE = 64 * 1024; // 64 KB head/tail boundary chunk
     private const int PAGE_CACHE_EVICTION_INTERVAL_BYTES = 16 * 1024 * 1024; // 16 MB kernel page cache boundary
     private const string TEMP_FILE_EXTENSION = ".parityproof.tmp";
+    private const int MAX_COLLISION_SUFFIX = 10_000;
+    private const int MAX_COMMIT_ATTEMPTS = 5;
 
     public Task<int> CopyMissingFilesAsync(
         IReadOnlyList<MediaFile> missingFiles,
@@ -65,7 +67,10 @@ public sealed class MediaCopier : IMediaCopier
         long totalBytes = missingFiles.Sum(f => f.FileLength);
         long totalCopiedBytes = 0;
         int completedFiles = 0;
+        int renamedCopyCount = 0;
         Stopwatch overallStopwatch = Stopwatch.StartNew();
+
+        CollisionSiblingIndex siblingIndex = new();
 
         byte[] rentedBuffer = ArrayPool<byte>.Shared.Rent(COPY_BUFFER_SIZE);
         byte[] tailBuffer = new byte[HEAD_TAIL_CHUNK_SIZE];
@@ -119,13 +124,15 @@ public sealed class MediaCopier : IMediaCopier
                             completedFiles,
                             0.0,
                             isCompleted: false,
-                            isPaused: true)));
+                            isPaused: true),
+                        RenamedCopyCount: renamedCopyCount));
 
                     overallStopwatch.Stop();
                     await pauseToken.WaitWhilePausedAsync(cancellationToken).ConfigureAwait(false);
                     overallStopwatch.Start();
                 }
 
+                List<string> requestedDestPaths = new(activeDestPaths.Count);
                 List<string> destPathsToWrite = new(activeDestPaths.Count);
                 List<string> tempPathsToClean = new(activeDestPaths.Count);
 
@@ -161,14 +168,46 @@ public sealed class MediaCopier : IMediaCopier
                         }
                     }
 
-                    string? dir = Path.GetDirectoryName(path);
+                    // Camera file names repeat across bodies and counter resets, so an occupied path is
+                    // never replaced: the copy moves to the next free sibling name (IMG_0001_1.CR3, ...).
+                    // Siblings are only looked up once the path is known to hold a different file or a folder.
+                    string targetPath = path;
+                    if (existingInfo.Exists || Directory.Exists(path))
+                    {
+                        List<string> sameLengthSiblings = siblingIndex.FindSiblingsWithLength(path, file.FileLength);
+                        if (sameLengthSiblings.Count > 0)
+                        {
+                            if (!srcHashesKnown)
+                            {
+                                (srcHead, srcTail) = ChunkReader.ComputeHeadTailHash(file.FullPath);
+                                srcHashesKnown = true;
+                            }
+
+                            if (ContainsHeadTailMatch(sameLengthSiblings, srcHead, srcTail))
+                            {
+                                // An earlier renamed copy of this file is already intact on this destination.
+                                continue;
+                            }
+                        }
+
+                        targetPath = FindUnoccupiedSiblingPath(path);
+                        AppLogger.Logger.Warning(
+                            "Destination {DestinationPath} already holds a different file or folder; " +
+                            "writing {SourcePath} as {ResolvedPath}",
+                            path,
+                            file.FullPath,
+                            targetPath);
+                    }
+
+                    string? dir = Path.GetDirectoryName(targetPath);
                     if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
                     {
                         Directory.CreateDirectory(dir);
                     }
 
-                    destPathsToWrite.Add(path);
-                    tempPathsToClean.Add(path + TEMP_FILE_EXTENSION);
+                    requestedDestPaths.Add(path);
+                    destPathsToWrite.Add(targetPath);
+                    tempPathsToClean.Add(targetPath + TEMP_FILE_EXTENSION);
                 }
 
                 if (destPathsToWrite.Count == 0)
@@ -328,7 +367,8 @@ public sealed class MediaCopier : IMediaCopier
                                         completedFiles,
                                         mbPerSec,
                                         isCompleted: false,
-                                        isPaused: false)));
+                                        isPaused: false),
+                                    RenamedCopyCount: renamedCopyCount));
                             }
 
                             // Compute final in-flight tail hash without touching the source disk again
@@ -372,13 +412,22 @@ public sealed class MediaCopier : IMediaCopier
                                 $"Post-copy hash verification failed for '{file.RelativePath}' at '{destPath}'. Destination checksum mismatch after transfer.");
                         }
 
-                        File.Move(tempPath, destPath, overwrite: true);
+                        string committedPath = CommitWithoutOverwrite(
+                            tempPath,
+                            destPath,
+                            requestedDestPaths[i],
+                            file.FullPath);
+                        siblingIndex.RecordWrittenFile(committedPath);
+                        if (!string.Equals(committedPath, requestedDestPaths[i], StringComparison.Ordinal))
+                        {
+                            renamedCopyCount++;
+                        }
 
                         try
                         {
                             if (file.LastWriteTimeUtc != default)
                             {
-                                File.SetLastWriteTimeUtc(destPath, file.LastWriteTimeUtc);
+                                File.SetLastWriteTimeUtc(committedPath, file.LastWriteTimeUtc);
                             }
 
                             if (File.Exists(file.FullPath))
@@ -386,7 +435,7 @@ public sealed class MediaCopier : IMediaCopier
                                 DateTime creationTimeUtc = File.GetCreationTimeUtc(file.FullPath);
                                 if (creationTimeUtc != default)
                                 {
-                                    File.SetCreationTimeUtc(destPath, creationTimeUtc);
+                                    File.SetCreationTimeUtc(committedPath, creationTimeUtc);
                                 }
                             }
                         }
@@ -395,7 +444,7 @@ public sealed class MediaCopier : IMediaCopier
                             AppLogger.Logger.Warning(
                                 ex,
                                 "Failed to preserve timestamps for destination file {DestinationPath}",
-                                destPath);
+                                committedPath);
                         }
                     }
 
@@ -468,10 +517,101 @@ public sealed class MediaCopier : IMediaCopier
                 completedFiles,
                 0.0,
                 isCompleted: true,
-                isPaused: false)));
+                isPaused: false),
+            RenamedCopyCount: renamedCopyCount));
+
+        if (renamedCopyCount > 0)
+        {
+            AppLogger.Logger.Warning(
+                "Copy saved {RenamedCopyCount} copies under a new name because a different file or folder " +
+                "already used the requested name",
+                renamedCopyCount);
+        }
 
         return completedFiles;
     }
+
+    private static string CommitWithoutOverwrite(
+        string tempPath,
+        string targetPath,
+        string requestedPath,
+        string sourcePath)
+    {
+        string candidatePath = targetPath;
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                File.Move(tempPath, candidatePath, overwrite: false);
+                return candidatePath;
+            }
+            catch (IOException ex) when (File.Exists(tempPath) && IsPathOccupied(candidatePath))
+            {
+                // A small cap stops a misbehaving filesystem (e.g. link succeeded but unlinking the temp
+                // file failed) from spraying sibling names across the destination.
+                if (attempt >= MAX_COMMIT_ATTEMPTS)
+                {
+                    throw new IOException(
+                        $"Could not commit '{sourcePath}' next to '{requestedPath}': the chosen name was taken " +
+                        $"during the copy on each of {MAX_COMMIT_ATTEMPTS} attempts.",
+                        ex);
+                }
+
+                // Another writer claimed the name after it was resolved; keep their file and take the next free name.
+                string nextPath = FindUnoccupiedSiblingPath(requestedPath);
+                AppLogger.Logger.Warning(
+                    ex,
+                    "Destination {DestinationPath} appeared during the copy; writing {SourcePath} as {ResolvedPath}",
+                    candidatePath,
+                    sourcePath,
+                    nextPath);
+                candidatePath = nextPath;
+            }
+        }
+    }
+
+    private static bool ContainsHeadTailMatch(List<string> candidatePaths, ulong expectedHead, ulong expectedTail)
+    {
+        foreach (string candidatePath in candidatePaths)
+        {
+            (ulong head, ulong tail) = ChunkReader.ComputeHeadTailHash(candidatePath);
+            if (head == expectedHead && tail == expectedTail)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string FindUnoccupiedSiblingPath(string requestedPath)
+    {
+        int suffix = 1;
+        string candidatePath = BuildSiblingPath(requestedPath, suffix);
+        while (IsPathOccupied(candidatePath))
+        {
+            suffix++;
+            candidatePath = BuildSiblingPath(requestedPath, suffix);
+        }
+
+        return candidatePath;
+    }
+
+    private static string BuildSiblingPath(string requestedPath, int suffix)
+    {
+        if (suffix > MAX_COLLISION_SUFFIX)
+        {
+            throw new IOException(
+                $"No free file name found next to '{requestedPath}' after {MAX_COLLISION_SUFFIX} attempts.");
+        }
+
+        string directory = Path.GetDirectoryName(requestedPath) ?? string.Empty;
+        string stem = Path.GetFileNameWithoutExtension(requestedPath);
+        string extension = Path.GetExtension(requestedPath);
+        return Path.Combine(directory, $"{stem}_{suffix}{extension}");
+    }
+
+    private static bool IsPathOccupied(string path) => File.Exists(path) || Directory.Exists(path);
 
     private static IReadOnlyList<StageProgressInfo> BuildCopyStages(
         long totalBytes,
