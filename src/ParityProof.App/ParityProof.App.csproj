@@ -37,5 +37,6 @@
     <ProjectReference Include="..\ParityProof.Core\ParityProof.Core.csproj" />
     <ProjectReference Include="..\ParityProof.Engine\ParityProof.Engine.csproj" />
     <ProjectReference Include="..\ParityProof.Platform\ParityProof.Platform.csproj" />
+    <InternalsVisibleTo Include="ParityProof.Engine.Tests" />
   </ItemGroup>
 </Project>

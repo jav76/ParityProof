@@ -146,16 +146,15 @@ public static class StorageMediaDetector
     {
         try
         {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return false;
+            }
+
             string fullPath = Path.GetFullPath(path);
 
             if (OperatingSystem.IsLinux())
             {
-                if (fullPath.StartsWith("/media/", StringComparison.Ordinal) ||
-                    fullPath.StartsWith("/run/media/", StringComparison.Ordinal))
-                {
-                    return true;
-                }
-
                 string baseDev = GetLinuxBaseDevice(fullPath);
                 if (!string.IsNullOrEmpty(baseDev))
                 {
@@ -164,31 +163,46 @@ public static class StorageMediaDetector
                         return true;
                     }
 
+                    string rotationalPath = Path.Combine("/sys/block", baseDev, "queue/rotational");
+                    bool isNonRotational = File.Exists(rotationalPath) &&
+                                           string.Equals(File.ReadAllText(rotationalPath).Trim(), "0", StringComparison.Ordinal);
+
                     string removablePath = Path.Combine("/sys/block", baseDev, "removable");
-                    if (File.Exists(removablePath))
+                    bool isRemovableFlag = File.Exists(removablePath) &&
+                                           string.Equals(File.ReadAllText(removablePath).Trim(), "1", StringComparison.Ordinal);
+
+                    // If non-rotational solid-state media (NVMe, SATA external SSD, USB SSD),
+                    // verify if it is an actual SSD rather than a slow single-channel SD card
+                    if (isNonRotational)
                     {
-                        string val = File.ReadAllText(removablePath).Trim();
-                        if (string.Equals(val, "1", StringComparison.Ordinal))
+                        string modelPath = Path.Combine("/sys/block", baseDev, "device/model");
+                        string model = File.Exists(modelPath) ? File.ReadAllText(modelPath).Trim() : string.Empty;
+                        bool modelIndicatesSsd = model.Contains("SSD", StringComparison.OrdinalIgnoreCase) ||
+                                                 model.Contains("Extreme", StringComparison.OrdinalIgnoreCase) ||
+                                                 model.Contains("NVMe", StringComparison.OrdinalIgnoreCase) ||
+                                                 model.Contains("Solid State", StringComparison.OrdinalIgnoreCase);
+
+                        if (modelIndicatesSsd || !isRemovableFlag)
                         {
-                            return true;
+                            return false;
                         }
                     }
 
-                    string blockSysfs = Path.Combine("/sys/block", baseDev);
-                    if (Directory.Exists(blockSysfs))
+                    if (isRemovableFlag)
                     {
-                        try
-                        {
-                            string realTarget = Path.GetFullPath(blockSysfs);
-                            if (realTarget.Contains("/usb", StringComparison.OrdinalIgnoreCase))
-                            {
-                                return true;
-                            }
-                        }
-                        catch
-                        {
-                            // Ignore symlink resolution failure
-                        }
+                        return true;
+                    }
+                }
+                else
+                {
+                    // Fallback for mock/test paths or unmounted virtual paths under removable directories
+                    if (fullPath.StartsWith("/media/", StringComparison.Ordinal) ||
+                        fullPath.StartsWith("/run/media/", StringComparison.Ordinal) ||
+                        fullPath.Contains("SD_CARD", StringComparison.OrdinalIgnoreCase) ||
+                        fullPath.Contains("/sdcard", StringComparison.OrdinalIgnoreCase) ||
+                        fullPath.Contains("/mmcblk", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return true;
                     }
                 }
             }
@@ -199,6 +213,12 @@ public static class StorageMediaDetector
                 DriveInfo driveInfo = new(root);
                 if (driveInfo.DriveType == DriveType.Removable)
                 {
+                    StorageMediaType detected = Detect(fullPath);
+                    if (detected == StorageMediaType.SolidState)
+                    {
+                        return false;
+                    }
+
                     return true;
                 }
             }
@@ -236,6 +256,13 @@ public static class StorageMediaDetector
                     matchedDevice = device;
                 }
             }
+        }
+
+        if (longestMountPoint == "/" &&
+            (fullPath.StartsWith("/media/", StringComparison.Ordinal) ||
+             fullPath.StartsWith("/run/media/", StringComparison.Ordinal)))
+        {
+            return string.Empty;
         }
 
         if (!matchedDevice.StartsWith("/dev/", StringComparison.Ordinal))

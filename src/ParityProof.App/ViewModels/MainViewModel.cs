@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -38,6 +40,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     private const string COLOR_PARTIAL = "#F59E0B"; // Amber
     private const string COLOR_UNSAFE = "#F43F5E"; // Rose
     private const string COLOR_IDLE = "#3B82F6"; // Blue
+    private const string SAFETY_BADGE_INPUTS_CHANGED = "INPUTS CHANGED - RE-VERIFY BEFORE FORMATTING";
 
     private readonly IVerificationEngine _verificationEngine;
     private readonly IMediaCopier _mediaCopier;
@@ -53,6 +56,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     private PauseTokenSource? _pauseTokenSource;
     private VerificationSummary? _lastSummary;
     private IReadOnlyList<VerificationResultItem> _lastResults = Array.Empty<VerificationResultItem>();
+    private int _verificationInputsVersion;
 
     public string AppVersionDisplay => BuildInfo.Current.DisplayVersion;
     public string WindowTitle => $"ParityProof - {BuildInfo.Current.DisplayVersion}";
@@ -105,7 +109,18 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private string _sourcePath = string.Empty;
 
+    partial void OnSourcePathChanged(string value)
+    {
+        if (_lastSummary is not null && IsSamePath(value, _lastSummary.SourcePath))
+        {
+            return;
+        }
+
+        InvalidateVerificationResults("Source path changed");
+    }
+
     private int _destinationSequence = 0;
+    private readonly List<BackupDestinationViewModel> _observedDestinations = new();
 
     [ObservableProperty]
     private ObservableCollection<BackupDestinationViewModel> _destinations = new();
@@ -118,10 +133,8 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
 
     partial void OnSelectedModeChanged(VerificationMode value)
     {
-        if (!HasResults)
-        {
-            DisplayedScanMode = FormatScanMode(value);
-        }
+        InvalidateVerificationResults("Verification mode changed");
+        DisplayedScanMode = FormatScanMode(value);
     }
 
     [ObservableProperty]
@@ -137,6 +150,11 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
 
     [ObservableProperty]
     private FilterPreset _selectedPreset;
+
+    partial void OnSelectedPresetChanged(FilterPreset value)
+    {
+        InvalidateVerificationResults("Filter preset changed");
+    }
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanStartOperation))]
@@ -156,6 +174,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanStartOperation))]
     [NotifyPropertyChangedFor(nameof(CanStartCopy))]
+    [NotifyCanExecuteChangedFor(nameof(ExportReportCommand))]
     private bool _isOperationActive;
 
     [ObservableProperty]
@@ -669,6 +688,8 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         _verificationEngine = new MultiDestinationVerifier(_indexCache, _duplicateAnalyzer);
         _mediaCopier = new MediaCopier();
 
+        Destinations.CollectionChanged += OnDestinationsCollectionChanged;
+
         _driveDetector = DriveDetectorFactory.Create();
         _driveDetector.DriveChanged += OnDriveChanged;
         _driveDetector.Start();
@@ -680,6 +701,15 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         _elapsedTimer.Tick += OnElapsedTimerTick;
     }
 
+    internal MainViewModel(IVerificationEngine verificationEngine, IDuplicateAnalyzer duplicateAnalyzer)
+        : this()
+    {
+        _verificationEngine = verificationEngine;
+        _duplicateAnalyzer = duplicateAnalyzer;
+    }
+
+    internal VerificationSummary? LastVerificationSummary => _lastSummary;
+
     private void OnElapsedTimerTick(object? sender, EventArgs e)
     {
         if (!IsPaused && _operationStopwatch.IsRunning)
@@ -690,25 +720,141 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
 
     private void OnDriveChanged(object? sender, DriveNotificationEventArgs e)
     {
-        Dispatcher.UIThread.Post(() =>
+        Dispatcher.UIThread.Post(() => ApplyDriveNotification(e));
+    }
+
+    internal void ApplyDriveNotification(DriveNotificationEventArgs e)
+    {
+        // A card swapped at the same mount path keeps SourcePath unchanged, so the drive event itself
+        // must retire any verdict (finished or in flight) for media on that drive.
+        bool affectsSource = IsSameOrUnderPath(_lastSummary?.SourcePath, e.DrivePath) ||
+            IsSameOrUnderPath(SourcePath, e.DrivePath);
+
+        if (e.EventType == DriveEventType.Inserted)
         {
-            if (e.EventType == DriveEventType.Inserted)
+            if (affectsSource)
             {
-                if (string.IsNullOrEmpty(SourcePath))
-                {
-                    SourcePath = e.DrivePath;
-                }
-                StatusMessage = $"Removable media detected: {e.VolumeLabel} ({e.DrivePath})";
+                InvalidateVerificationResults("Source drive was remounted");
             }
-            else if (e.EventType == DriveEventType.Removed)
+
+            if (string.IsNullOrEmpty(SourcePath))
             {
-                StatusMessage = $"Drive removed: {e.DrivePath}";
-                if (string.Equals(SourcePath, e.DrivePath, StringComparison.OrdinalIgnoreCase))
-                {
-                    SourcePath = string.Empty;
-                }
+                SourcePath = e.DrivePath;
             }
-        });
+            StatusMessage = $"Removable media detected: {e.VolumeLabel} ({e.DrivePath})";
+        }
+        else if (e.EventType == DriveEventType.Removed)
+        {
+            if (affectsSource)
+            {
+                InvalidateVerificationResults("Source drive was removed");
+            }
+
+            StatusMessage = $"Drive removed: {e.DrivePath}";
+            if (string.Equals(SourcePath, e.DrivePath, StringComparison.OrdinalIgnoreCase))
+            {
+                SourcePath = string.Empty;
+            }
+        }
+    }
+
+    private void InvalidateVerificationResults(string reason)
+    {
+        _verificationInputsVersion++;
+
+        bool hadResults = _lastSummary is not null || AllItems.Count > 0 || AllDuplicateGroups.Count > 0;
+
+        _lastSummary = null;
+        _lastResults = Array.Empty<VerificationResultItem>();
+        ExportReportCommand.NotifyCanExecuteChanged();
+        LastExportedReportPath = null;
+
+        SelectedMediaItem = null;
+        AllItems.Clear();
+        FilteredItems.Clear();
+        AllDuplicateGroups.Clear();
+        FilteredDuplicateGroups.Clear();
+
+        TotalFiles = 0;
+        TotalSizeFormatted = "0.0 GB";
+        VerifiedCount = 0;
+        MissingCount = 0;
+        CorruptCount = 0;
+        DuplicateFilesCount = 0;
+        ReclaimableSpaceFormatted = "0 B";
+        CrossDestinationRedundantCount = 0;
+        HasDuplicates = false;
+        HasDuplicateGroups = false;
+        HasResults = false;
+        HasMissingFiles = false;
+
+        if (!hadResults)
+        {
+            return;
+        }
+
+        _logger.Information("Cleared previous verification results: {Reason}", reason);
+
+        // A running operation owns the banner; it reports its own outcome when it finishes.
+        if (IsOperationActive)
+        {
+            return;
+        }
+
+        DurationFormatted = "--:--";
+        SafetyBadgeText = SAFETY_BADGE_INPUTS_CHANGED;
+        SafetyBadgeColor = COLOR_IDLE;
+        StatusMessage = $"{reason}. Previous results were cleared; verify again before formatting.";
+    }
+
+    private static string CanonicalizePath(string path) =>
+        Path.GetFullPath(path.Trim()).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+    private static bool TryCanonicalizePath(string? path, out string canonicalPath)
+    {
+        canonicalPath = string.Empty;
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return false;
+        }
+
+        try
+        {
+            canonicalPath = CanonicalizePath(path);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.Debug(ex, "Failed to canonicalize path {Path}", path);
+            return false;
+        }
+    }
+
+    private static bool IsSamePath(string? left, string? right)
+    {
+        // Case-sensitive on purpose: on a case-sensitive volume a case-only difference is another folder,
+        // so an ambiguous match errs toward re-verification.
+        return TryCanonicalizePath(left, out string canonicalLeft) &&
+            TryCanonicalizePath(right, out string canonicalRight) &&
+            string.Equals(canonicalLeft, canonicalRight, StringComparison.Ordinal);
+    }
+
+    private static bool IsSameOrUnderPath(string? path, string rootPath)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return false;
+        }
+
+        // Paths that cannot be resolved are treated as affected so the verdict errs toward re-verification.
+        if (!TryCanonicalizePath(path, out string canonicalPath) ||
+            !TryCanonicalizePath(rootPath, out string canonicalRoot))
+        {
+            return true;
+        }
+
+        return string.Equals(canonicalPath, canonicalRoot, StringComparison.OrdinalIgnoreCase) ||
+            canonicalPath.StartsWith(canonicalRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
     }
 
     private DispatcherTimer? _searchDebounceTimer;
@@ -821,10 +967,8 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         string canonicalDest;
         try
         {
-            canonicalSource = Path.GetFullPath(sourcePath.Trim())
-                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            canonicalDest = Path.GetFullPath(destinationPath.Trim())
-                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            canonicalSource = CanonicalizePath(sourcePath);
+            canonicalDest = CanonicalizePath(destinationPath);
         }
         catch (Exception ex)
         {
@@ -867,8 +1011,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         string canonicalDest;
         try
         {
-            canonicalDest = Path.GetFullPath(trimmed)
-                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            canonicalDest = CanonicalizePath(trimmed);
         }
         catch (Exception ex)
         {
@@ -878,10 +1021,8 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         }
 
         bool isDuplicate = Destinations.Any(d =>
-            string.Equals(
-                Path.GetFullPath(d.RootPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
-                canonicalDest,
-                StringComparison.OrdinalIgnoreCase));
+            TryCanonicalizePath(d.RootPath, out string existingDest) &&
+            string.Equals(existingDest, canonicalDest, StringComparison.OrdinalIgnoreCase));
 
         if (isDuplicate)
         {
@@ -909,6 +1050,34 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     private void RemoveDestination(BackupDestinationViewModel dest)
     {
         Destinations.Remove(dest);
+    }
+
+    private void OnDestinationsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        // Resubscribe from the live collection: a Reset (Clear) event carries no OldItems to unsubscribe.
+        foreach (BackupDestinationViewModel dest in _observedDestinations)
+        {
+            dest.PropertyChanged -= OnDestinationPropertyChanged;
+        }
+
+        _observedDestinations.Clear();
+        _observedDestinations.AddRange(Destinations);
+
+        foreach (BackupDestinationViewModel dest in _observedDestinations)
+        {
+            dest.PropertyChanged += OnDestinationPropertyChanged;
+        }
+
+        InvalidateVerificationResults("Backup destinations changed");
+    }
+
+    private void OnDestinationPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(BackupDestinationViewModel.IsEnabled) or
+            nameof(BackupDestinationViewModel.RootPath))
+        {
+            InvalidateVerificationResults("Backup destination settings changed");
+        }
     }
 
     [RelayCommand]
@@ -999,11 +1168,16 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
     private async Task VerifyAsync()
     {
         string trimmedSource = SourcePath?.Trim() ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(trimmedSource) || !Directory.Exists(trimmedSource))
+        if (string.IsNullOrWhiteSpace(trimmedSource))
         {
-            StatusMessage = string.IsNullOrWhiteSpace(trimmedSource)
-                ? "Please select a valid source directory."
-                : $"Source directory not found: {trimmedSource}";
+            StatusMessage = "Please select a valid source directory.";
+            return;
+        }
+
+        if (!Directory.Exists(trimmedSource))
+        {
+            InvalidateVerificationResults("Source directory not found");
+            StatusMessage = $"Source directory not found: {trimmedSource}";
             return;
         }
 
@@ -1026,6 +1200,11 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
 
         IsRunning = true;
         IsOperationActive = true;
+
+        // Retire the previous verdict before the first await so a cancelled or failed run cannot leave it behind.
+        InvalidateVerificationResults("New verification started");
+        int inputsVersion = _verificationInputsVersion;
+
         IsBatchIndeterminate = true;
         IsPausing = false;
         IsPaused = false;
@@ -1208,8 +1387,22 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
                     _pauseTokenSource.Token,
                     scanDuplicates: ScanDuplicatesDuringVerification)).ConfigureAwait(true);
 
+            if (inputsVersion != _verificationInputsVersion)
+            {
+                _logger.Warning(
+                    "Discarding verification results for {SourcePath}: inputs changed during the run",
+                    trimmedSource);
+                SafetyBadgeText = SAFETY_BADGE_INPUTS_CHANGED;
+                SafetyBadgeColor = COLOR_IDLE;
+                StatusMessage = "Inputs changed during verification. Results were discarded; " +
+                    "verify again before formatting.";
+                CurrentProgressPhase = StatusMessage;
+                return;
+            }
+
             _lastSummary = summary;
             _lastResults = results;
+            ExportReportCommand.NotifyCanExecuteChanged();
 
             TotalFiles = summary.TotalFiles;
             TotalSizeFormatted = $"{(summary.TotalBytes / (1024.0 * 1024.0 * 1024.0)):F2} GB";
@@ -1219,27 +1412,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
             DurationFormatted = $"{summary.Duration.TotalSeconds:F1}s";
             DisplayedScanMode = FormatScanMode(summary.Mode);
 
-            int verifiedWithAtLeastOneCopy = summary.FullyVerifiedFiles + summary.PartiallyVerifiedFiles;
-            double backupPercentage = summary.TotalFiles > 0
-                ? (double)verifiedWithAtLeastOneCopy / summary.TotalFiles * 100.0
-                : 0.0;
-            int unprotectedCount = summary.MissingFiles + summary.CorruptFiles;
-
-            SafetyBadgeText = summary.SafetyStatus switch
-            {
-                OverallSafetyStatus.SafeToFormat => "SAFE TO FORMAT - 100% BACKED UP",
-                OverallSafetyStatus.PartiallyBackedUp => $"PARTIALLY BACKED UP - 100% SINGLE COPY ({(summary.PartiallyVerifiedFiles == 1 ? "1 NEEDS" : $"{summary.PartiallyVerifiedFiles} NEED")} REDUNDANCY)",
-                OverallSafetyStatus.NoMediaFound => "NO MEDIA DETECTED - DO NOT FORMAT",
-                _ => $"UNSAFE TO FORMAT - {backupPercentage:F0}% BACKED UP ({unprotectedCount} UNPROTECTED)"
-            };
-
-            SafetyBadgeColor = summary.SafetyStatus switch
-            {
-                OverallSafetyStatus.SafeToFormat => COLOR_SAFE,
-                OverallSafetyStatus.PartiallyBackedUp => COLOR_PARTIAL,
-                OverallSafetyStatus.NoMediaFound => "#64748B",
-                _ => COLOR_UNSAFE
-            };
+            ApplySafetyVerdict(summary);
 
             Dictionary<string, string> destNames = new(StringComparer.OrdinalIgnoreCase);
             foreach (BackupDestinationViewModel dest in Destinations)
@@ -1369,15 +1542,58 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         }
     }
 
+    private void ApplySafetyVerdict(VerificationSummary summary)
+    {
+        int verifiedWithAtLeastOneCopy = summary.FullyVerifiedFiles + summary.PartiallyVerifiedFiles;
+        double backupPercentage = summary.TotalFiles > 0
+            ? (double)verifiedWithAtLeastOneCopy / summary.TotalFiles * 100.0
+            : 0.0;
+        int unprotectedCount = summary.MissingFiles + summary.CorruptFiles;
+
+        SafetyBadgeText = summary.SafetyStatus switch
+        {
+            OverallSafetyStatus.SafeToFormat => "SAFE TO FORMAT - 100% BACKED UP",
+            OverallSafetyStatus.PartiallyBackedUp => $"PARTIALLY BACKED UP - 100% SINGLE COPY ({(summary.PartiallyVerifiedFiles == 1 ? "1 NEEDS" : $"{summary.PartiallyVerifiedFiles} NEED")} REDUNDANCY)",
+            OverallSafetyStatus.NoMediaFound => "NO MEDIA DETECTED - DO NOT FORMAT",
+            _ => $"UNSAFE TO FORMAT - {backupPercentage:F0}% BACKED UP ({unprotectedCount} UNPROTECTED)"
+        };
+
+        SafetyBadgeColor = summary.SafetyStatus switch
+        {
+            OverallSafetyStatus.SafeToFormat => COLOR_SAFE,
+            OverallSafetyStatus.PartiallyBackedUp => COLOR_PARTIAL,
+            OverallSafetyStatus.NoMediaFound => "#64748B",
+            _ => COLOR_UNSAFE
+        };
+    }
+
+    // A duplicate audit says nothing about backup safety, so its outcome never replaces a current verdict.
+    private void ShowSafetyBannerAfterDuplicateAudit(string auditOutcomeText, string auditOutcomeColor)
+    {
+        if (_lastSummary is not null)
+        {
+            ApplySafetyVerdict(_lastSummary);
+            return;
+        }
+
+        SafetyBadgeText = auditOutcomeText;
+        SafetyBadgeColor = auditOutcomeColor;
+    }
+
     [RelayCommand]
     private async Task ScanDuplicatesAsync()
     {
         string trimmedSource = SourcePath?.Trim() ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(trimmedSource) || !Directory.Exists(trimmedSource))
+        if (string.IsNullOrWhiteSpace(trimmedSource))
         {
-            StatusMessage = string.IsNullOrWhiteSpace(trimmedSource)
-                ? "Please select a valid source directory to scan for duplicates."
-                : $"Source directory not found: {trimmedSource}";
+            StatusMessage = "Please select a valid source directory to scan for duplicates.";
+            return;
+        }
+
+        if (!Directory.Exists(trimmedSource))
+        {
+            InvalidateVerificationResults("Source directory not found");
+            StatusMessage = $"Source directory not found: {trimmedSource}";
             return;
         }
 
@@ -1591,8 +1807,13 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
             ActiveTab = "Duplicates";
             ApplyFilter();
 
-            SafetyBadgeText = "DUPLICATE AUDIT COMPLETE";
-            SafetyBadgeColor = COLOR_SAFE;
+            if (_lastSummary is not null)
+            {
+                _lastSummary = _lastSummary with { DuplicateAnalysis = result };
+            }
+
+            ShowSafetyBannerAfterDuplicateAudit("DUPLICATE AUDIT COMPLETE", COLOR_IDLE);
+
             StatusMessage = $"Duplicate scan complete: {result.TotalDuplicateCopies} duplicates found. {ReclaimableSpaceFormatted} reclaimable.";
             StateBadgeText = "FINISHED";
             StateBadgeBackground = "#064E3B";
@@ -1610,8 +1831,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         catch (OperationCanceledException)
         {
             _logger.Information("Duplicate scan cancelled by user for source {SourcePath}", SourcePath);
-            SafetyBadgeText = "DUPLICATE AUDIT CANCELLED";
-            SafetyBadgeColor = "#7F1D1D";
+            ShowSafetyBannerAfterDuplicateAudit("DUPLICATE AUDIT CANCELLED", "#7F1D1D");
             StatusMessage = "Duplicate scan cancelled by user.";
             CurrentProgressPhase = "Cancelled.";
             StateBadgeText = "CANCELLED";
@@ -1621,8 +1841,7 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         catch (Exception ex)
         {
             _logger.Error(ex, "Duplicate scan failed for source {SourcePath}", SourcePath);
-            SafetyBadgeText = "DUPLICATE AUDIT FAILED";
-            SafetyBadgeColor = "#7F1D1D";
+            ShowSafetyBannerAfterDuplicateAudit("DUPLICATE AUDIT FAILED", "#7F1D1D");
             StatusMessage = $"Duplicate scan error: {ex.Message}";
             StateBadgeText = "ERROR";
             StateBadgeBackground = "#7F1D1D";
@@ -1915,10 +2134,20 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
         }
     }
 
-    [RelayCommand]
+    private bool CanExportReport() => _lastSummary is not null && _lastResults.Count > 0 && !IsOperationActive;
+
+    [RelayCommand(CanExecute = nameof(CanExportReport))]
     private async Task ExportReportAsync(string format)
     {
-        if (_lastSummary is null || _lastResults.Count == 0)
+        VerificationSummary? summary = _lastSummary;
+        IReadOnlyList<VerificationResultItem> results = _lastResults;
+        if (IsOperationActive)
+        {
+            StatusMessage = "Wait for the current operation to finish before exporting a report.";
+            return;
+        }
+
+        if (summary is null || results.Count == 0)
         {
             StatusMessage = "No verification results available to export.";
             return;
@@ -1969,9 +2198,15 @@ public sealed partial class MainViewModel : ViewModelBase, IDisposable
             outputPath = Path.Combine(docsDir, fileName);
         }
 
+        if (!ReferenceEquals(summary, _lastSummary))
+        {
+            StatusMessage = "Verification results changed before the report was saved. Verify again, then export.";
+            return;
+        }
+
         try
         {
-            await generator.GenerateReportAsync(_lastSummary, _lastResults, outputPath);
+            await generator.GenerateReportAsync(summary, results, outputPath);
             LastExportedReportPath = outputPath;
             StatusMessage = $"Audit report exported to: {outputPath}";
             _logger.Information("Audit report exported successfully to {OutputPath}", outputPath);
