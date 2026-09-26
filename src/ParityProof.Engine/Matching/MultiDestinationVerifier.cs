@@ -18,13 +18,12 @@ using ParityProof.Platform.Diagnostics;
 
 namespace ParityProof.Engine.Matching;
 
-[LogMethod]
 public sealed class MultiDestinationVerifier : IVerificationEngine
 {
     public const int PROGRESS_REPORT_INTERVAL_MS = 50;
     public const int PERSISTENCE_FLUSH_INTERVAL_MS = 1000;
     public const int PERSISTENCE_BATCH_CAPACITY = 500;
-    public const double SLIDING_WINDOW_DURATION_SECONDS = 1.5;
+    public const double SLIDING_WINDOW_DURATION_SECONDS = 5.0;
     public const double ETA_SLIDING_WINDOW_DURATION_SECONDS = 10.0;
     public const double ETA_DAMPING_FACTOR = 0.85;
     public const double ETA_CUMULATIVE_WEIGHT = 0.80;
@@ -43,6 +42,7 @@ public sealed class MultiDestinationVerifier : IVerificationEngine
         _duplicateAnalyzer = duplicateAnalyzer ?? new DuplicateAnalyzer(cache);
     }
 
+    [LogMethod]
     public async Task<(VerificationSummary Summary, IReadOnlyList<VerificationResultItem> Results)> VerifyAsync(
         string sourcePath,
         IReadOnlyList<BackupDestination> destinations,
@@ -361,7 +361,7 @@ public sealed class MultiDestinationVerifier : IVerificationEngine
         // Dedicated hashing stopwatch excludes directory scanning and cache loading time
         Stopwatch hashingStopwatch = Stopwatch.StartNew();
         Queue<(double Timestamp, Dictionary<string, long> DriveBytes, long ProcessedBytes)> sampleQueue = new();
-        Queue<(double Timestamp, long SourceBytes)> etaSampleQueue = new();
+        Queue<(double Timestamp, long SourceBytes, long ProcessedFiles)> etaSampleQueue = new();
         double smoothedRemainingSeconds = -1.0;
 
         CancellationTokenSource reporterCts = new();
@@ -509,7 +509,7 @@ public sealed class MultiDestinationVerifier : IVerificationEngine
 
                 // Stabilized ETA calculation using continuous chunk streaming + dual-rate blending
                 long currentSourceBytes = driveBytesRead.TryGetValue("SRC", out long sb) ? sb : pBytes;
-                etaSampleQueue.Enqueue((currentTimestamp, currentSourceBytes));
+                etaSampleQueue.Enqueue((currentTimestamp, currentSourceBytes, pFiles));
 
                 while (etaSampleQueue.Count > 1 &&
                        (currentTimestamp - etaSampleQueue.Peek().Timestamp) > ETA_SLIDING_WINDOW_DURATION_SECONDS)
@@ -517,33 +517,64 @@ public sealed class MultiDestinationVerifier : IVerificationEngine
                     etaSampleQueue.Dequeue();
                 }
 
-                (double etaOldestTime, long etaOldestSrcBytes) = etaSampleQueue.Peek();
+                (double etaOldestTime, long etaOldestSrcBytes, long etaOldestFiles) = etaSampleQueue.Peek();
                 double etaDeltaSeconds = currentTimestamp - etaOldestTime;
                 long etaDeltaBytes = Math.Max(0, currentSourceBytes - etaOldestSrcBytes);
+                long etaDeltaFiles = Math.Max(0, pFiles - etaOldestFiles);
 
-                double mediumTermRate = etaDeltaSeconds >= 0.5
-                    ? (etaDeltaBytes / (1024.0 * 1024.0)) / etaDeltaSeconds
-                    : 0.0;
-
-                double cumulativeRate = currentTimestamp > 0.1
-                    ? (currentSourceBytes / (1024.0 * 1024.0)) / currentTimestamp
-                    : mediumTermRate;
-
-                double blendedRate;
-                if (mediumTermRate > 0.05 && cumulativeRate > 0.05)
+                double rawRemainingSeconds;
+                if (mode == VerificationMode.Full)
                 {
-                    blendedRate = (ETA_CUMULATIVE_WEIGHT * cumulativeRate) +
-                                  ((1.0 - ETA_CUMULATIVE_WEIGHT) * mediumTermRate);
+                    double mediumTermRate = etaDeltaSeconds >= 0.5
+                        ? (etaDeltaBytes / (1024.0 * 1024.0)) / etaDeltaSeconds
+                        : 0.0;
+
+                    double cumulativeRate = currentTimestamp > 0.1
+                        ? (currentSourceBytes / (1024.0 * 1024.0)) / currentTimestamp
+                        : mediumTermRate;
+
+                    double blendedRate;
+                    if (mediumTermRate > 0.05 && cumulativeRate > 0.05)
+                    {
+                        blendedRate = (ETA_CUMULATIVE_WEIGHT * cumulativeRate) +
+                                      ((1.0 - ETA_CUMULATIVE_WEIGHT) * mediumTermRate);
+                    }
+                    else
+                    {
+                        blendedRate = Math.Max(cumulativeRate, mediumTermRate);
+                    }
+
+                    long remainingBytes = Math.Max(0, totalBytes - currentSourceBytes);
+                    rawRemainingSeconds = blendedRate > 0.05
+                        ? (remainingBytes / (1024.0 * 1024.0)) / blendedRate
+                        : 0.0;
                 }
                 else
                 {
-                    blendedRate = Math.Max(cumulativeRate, mediumTermRate);
-                }
+                    double mediumTermFileRate = etaDeltaSeconds >= 0.5
+                        ? etaDeltaFiles / etaDeltaSeconds
+                        : 0.0;
 
-                long remainingBytes = Math.Max(0, totalBytes - currentSourceBytes);
-                double rawRemainingSeconds = blendedRate > 0.05
-                    ? (remainingBytes / (1024.0 * 1024.0)) / blendedRate
-                    : 0.0;
+                    double cumulativeFileRate = currentTimestamp > 0.1
+                        ? pFiles / currentTimestamp
+                        : mediumTermFileRate;
+
+                    double blendedFileRate;
+                    if (mediumTermFileRate > 0.01 && cumulativeFileRate > 0.01)
+                    {
+                        blendedFileRate = (ETA_CUMULATIVE_WEIGHT * cumulativeFileRate) +
+                                          ((1.0 - ETA_CUMULATIVE_WEIGHT) * mediumTermFileRate);
+                    }
+                    else
+                    {
+                        blendedFileRate = Math.Max(cumulativeFileRate, mediumTermFileRate);
+                    }
+
+                    long remainingFiles = Math.Max(0, totalFiles - pFiles);
+                    rawRemainingSeconds = blendedFileRate > 0.01
+                        ? remainingFiles / blendedFileRate
+                        : 0.0;
+                }
 
                 if (currentTimestamp < ETA_WARMUP_PERIOD_SECONDS || rawRemainingSeconds <= 0.0)
                 {
@@ -618,7 +649,7 @@ public sealed class MultiDestinationVerifier : IVerificationEngine
         try
         {
             // Decoupled pipeline degree of parallelism permits simultaneous cross-drive execution
-            int maxParallelism = Math.Max(sourceConcurrency, activeDestinations.Count * 4);
+            int maxParallelism = Math.Max(sourceConcurrency * 2, activeDestinations.Count * 4);
 
             await Parallel.ForEachAsync(
                 sourceFiles.Select((file, index) => (file, index)),
