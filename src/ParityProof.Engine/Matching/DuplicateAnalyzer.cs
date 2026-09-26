@@ -20,10 +20,24 @@ using ParityProof.Platform.Diagnostics;
 
 namespace ParityProof.Engine.Matching;
 
+// Where the audit stands at a pause checkpoint, so the paused report keeps the progress bar in place. It is not
+// nested in DuplicateAnalyzer because the class-level [LogMethod] weaving would wrap its constructor, and a woven
+// struct constructor fails at runtime with InvalidProgramException.
+internal readonly record struct DuplicateAuditCheckpoint(
+    string Phase,
+    int SourceFileCount,
+    long SourceBytes,
+    int TotalCandidates,
+    long ProcessedCandidates,
+    long TotalCandidateBytes,
+    long ProcessedCandidateBytes);
+
 [LogMethod]
 public sealed class DuplicateAnalyzer : IDuplicateAnalyzer
 {
     private const int FULL_HASH_BUFFER_SIZE = 1024 * 1024; // 1 MB buffer
+    private const string AUDIT_START_PHASE = "Auditing destinations for duplicates from source directory...";
+    private const string QUICK_SCAN_PHASE = "Auditing candidate duplicates: Quick head/tail scan...";
     private readonly IIndexCache? _cache;
 
     private sealed class DestinationFileEntry
@@ -68,8 +82,17 @@ public sealed class DuplicateAnalyzer : IDuplicateAnalyzer
             TotalFiles: 0,
             ProcessedBytes: 0,
             TotalBytes: 0,
-            Phase: "Auditing destinations for duplicates from source directory...",
+            Phase: AUDIT_START_PHASE,
             Stages: CreateDuplicateStages(srcFilesCount, srcFilesBytes, 0, 0, 0.0, null, isCompleted: false)));
+
+        DuplicateAuditCheckpoint startCheckpoint = new(
+            Phase: AUDIT_START_PHASE,
+            SourceFileCount: srcFilesCount,
+            SourceBytes: srcFilesBytes,
+            TotalCandidates: 0,
+            ProcessedCandidates: 0,
+            TotalCandidateBytes: 0,
+            ProcessedCandidateBytes: 0);
 
         List<DestinationFileEntry> allEntries = new();
         foreach (BackupDestination dest in destinations.Where(d => d.IsEnabled))
@@ -89,7 +112,7 @@ public sealed class DuplicateAnalyzer : IDuplicateAnalyzer
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        await CheckPauseAsync(pauseToken, cancellationToken).ConfigureAwait(false);
+        await CheckPauseAsync(pauseToken, progress, startCheckpoint, cancellationToken).ConfigureAwait(false);
 
         // Stage 1: Source-Guided Fast Metadata & Size Scan.
         // Index source files by (FileLength, Category).
@@ -150,7 +173,7 @@ public sealed class DuplicateAnalyzer : IDuplicateAnalyzer
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        await CheckPauseAsync(pauseToken, cancellationToken).ConfigureAwait(false);
+        await CheckPauseAsync(pauseToken, progress, startCheckpoint, cancellationToken).ConfigureAwait(false);
 
         // Stage 2: Quick Scan (Head & Tail 64KB Chunk Hashing) for candidate size/metadata buckets in parallel
         List<DestinationFileEntry> flatCandidates = candidateBuckets.SelectMany(b => b).ToList();
@@ -178,13 +201,22 @@ public sealed class DuplicateAnalyzer : IDuplicateAnalyzer
             TotalFiles: totalCandidates,
             ProcessedBytes: 0,
             TotalBytes: totalCandidateBytes,
-            Phase: "Auditing candidate duplicates: Quick head/tail scan...",
+            Phase: QUICK_SCAN_PHASE,
             CurrentFileBytes: 0,
             CurrentFileProcessedBytes: 0,
             MegaBytesPerSecond: 0,
             EstimatedTimeRemaining: TimeSpan.Zero,
             Stages: CreateDuplicateStages(srcFilesCount, srcFilesBytes, totalCandidates, 0, 0.0, null, isCompleted: false),
             IsPaused: false));
+
+        DuplicateAuditCheckpoint quickScanCheckpoint = new(
+            Phase: QUICK_SCAN_PHASE,
+            SourceFileCount: srcFilesCount,
+            SourceBytes: srcFilesBytes,
+            TotalCandidates: totalCandidates,
+            ProcessedCandidates: 0,
+            TotalCandidateBytes: totalCandidateBytes,
+            ProcessedCandidateBytes: 0);
 
         // Hydrate from SQLite cache if available
         List<MediaFile> filesToHydrate = flatCandidates.Select(e => e.File).Concat(relevantSources).ToList();
@@ -200,6 +232,9 @@ public sealed class DuplicateAnalyzer : IDuplicateAnalyzer
         List<MediaFile> hydratedSources = new();
         foreach (MediaFile sf in relevantSources)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            await CheckPauseAsync(pauseToken, progress, quickScanCheckpoint, cancellationToken).ConfigureAwait(false);
+
             MediaFile currentSource = sf;
             if (cachedMap is not null && cachedMap.TryGetValue(currentSource.FullPath, out MediaFile? cached))
             {
@@ -238,7 +273,15 @@ public sealed class DuplicateAnalyzer : IDuplicateAnalyzer
             async (index, ct) =>
             {
                 ct.ThrowIfCancellationRequested();
-                await CheckPauseAsync(pauseToken, ct).ConfigureAwait(false);
+                await CheckPauseAsync(
+                    pauseToken,
+                    progress,
+                    quickScanCheckpoint with
+                    {
+                        ProcessedCandidates = Interlocked.Read(ref processedCandidatesCount),
+                        ProcessedCandidateBytes = Interlocked.Read(ref processedCandidatesBytes),
+                    },
+                    ct).ConfigureAwait(false);
 
                 DestinationFileEntry entry = flatCandidates[index];
                 MediaFile currentFile = entry.File;
@@ -357,11 +400,25 @@ public sealed class DuplicateAnalyzer : IDuplicateAnalyzer
 
         bool isDeep = mode == VerificationMode.Deep;
         string phasePrefix = isDeep ? "Verifying Deep Probe Hash" : "Verifying Bit-for-Bit Hash";
+        int totalConfirmed = confirmedCandidates.Count;
+        long totalConfirmedBytes = confirmedCandidates.Sum(e => e.File.FileLength);
+
+        DuplicateAuditCheckpoint hashCheckpoint = new(
+            Phase: phasePrefix,
+            SourceFileCount: srcFilesCount,
+            SourceBytes: srcFilesBytes,
+            TotalCandidates: totalConfirmed,
+            ProcessedCandidates: 0,
+            TotalCandidateBytes: totalConfirmedBytes,
+            ProcessedCandidateBytes: 0);
 
         // Hydrate deep or full hashes for relevant source files
         HashSet<(long Length, ulong Hash)> validSourceKeys = new();
         foreach (MediaFile sf in hydratedSources)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            await CheckPauseAsync(pauseToken, progress, hashCheckpoint, cancellationToken).ConfigureAwait(false);
+
             MediaFile currentSource = sf;
             if (isDeep)
             {
@@ -401,8 +458,6 @@ public sealed class DuplicateAnalyzer : IDuplicateAnalyzer
             }
         }
 
-        int totalConfirmed = confirmedCandidates.Count;
-        long totalConfirmedBytes = confirmedCandidates.Sum(e => e.File.FileLength);
         long processedConfirmedCount = 0;
         long processedConfirmedBytes = 0;
         Stopwatch stage3Stopwatch = Stopwatch.StartNew();
@@ -419,7 +474,15 @@ public sealed class DuplicateAnalyzer : IDuplicateAnalyzer
             async (index, ct) =>
             {
                 ct.ThrowIfCancellationRequested();
-                await CheckPauseAsync(pauseToken, ct).ConfigureAwait(false);
+                await CheckPauseAsync(
+                    pauseToken,
+                    progress,
+                    hashCheckpoint with
+                    {
+                        ProcessedCandidates = Interlocked.Read(ref processedConfirmedCount),
+                        ProcessedCandidateBytes = Interlocked.Read(ref processedConfirmedBytes),
+                    },
+                    ct).ConfigureAwait(false);
 
                 DestinationFileEntry entry = confirmedCandidates[index];
                 MediaFile currentFile = entry.File;
@@ -603,12 +666,41 @@ public sealed class DuplicateAnalyzer : IDuplicateAnalyzer
             CrossDestinationRedundantFileCount: crossDestinationRedundantCount);
     }
 
-    private static async Task CheckPauseAsync(PauseToken pauseToken, CancellationToken cancellationToken)
+    // The UI leaves its "pausing" state only when a report says the audit is paused, so report before blocking.
+    // Otherwise a pause that lands in a sequential or cached step waits here with nothing reported.
+    private static async Task CheckPauseAsync(
+        PauseToken pauseToken,
+        IProgress<VerificationProgress>? progress,
+        DuplicateAuditCheckpoint checkpoint,
+        CancellationToken cancellationToken)
     {
-        if (pauseToken.IsPaused)
+        if (!pauseToken.IsPaused)
         {
-            await pauseToken.WaitWhilePausedAsync(cancellationToken).ConfigureAwait(false);
+            return;
         }
+
+        progress?.Report(new VerificationProgress(
+            CurrentFile: string.Empty,
+            ProcessedFiles: (int)checkpoint.ProcessedCandidates,
+            TotalFiles: checkpoint.TotalCandidates,
+            ProcessedBytes: checkpoint.ProcessedCandidateBytes,
+            TotalBytes: checkpoint.TotalCandidateBytes,
+            Phase: $"{checkpoint.Phase} (Paused)",
+            CurrentFileBytes: 0,
+            CurrentFileProcessedBytes: 0,
+            MegaBytesPerSecond: 0,
+            EstimatedTimeRemaining: TimeSpan.Zero,
+            IsPaused: true,
+            Stages: CreateDuplicateStages(
+                checkpoint.SourceFileCount,
+                checkpoint.SourceBytes,
+                checkpoint.TotalCandidates,
+                checkpoint.ProcessedCandidates,
+                0.0,
+                null,
+                isCompleted: false)));
+
+        await pauseToken.WaitWhilePausedAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static ulong ComputeFullFileHash(string filePath, CancellationToken cancellationToken)
