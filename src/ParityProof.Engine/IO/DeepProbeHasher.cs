@@ -30,7 +30,7 @@ public static class DeepProbeHasher
             return XxHash3.HashToUInt64(ReadOnlySpan<byte>.Empty);
         }
 
-        using SafeFileHandle handle = NativeDirectIO.OpenDirectOrSequential(filePath);
+        using SafeFileHandle handle = NativeDirectIO.OpenForProbeHashing(filePath);
         if (handle.IsInvalid)
         {
             throw new IOException($"Failed to open file for probe hashing: {filePath}");

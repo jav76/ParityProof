@@ -243,6 +243,65 @@ public sealed class ContentAddressedMatcherTests : IDisposable
         Assert.NotNull(deepStatus.DestinationDeepHash);
     }
 
+    [Fact]
+    public async Task MatchFileAsync_DeepMode_PrioritizesMatchingRelativePathCandidate()
+    {
+        const int FILE_SIZE = 5 * 1024 * 1024;
+        string srcPath = Path.Combine(_testDir, "src", "photos", "DSC0001.ARW");
+        string dstUnrelated = Path.Combine(_testDir, "backup_prio", "photos", "UNRELATED.ARW");
+        string dstMatching = Path.Combine(_testDir, "backup_prio", "photos", "DSC0001.ARW");
+
+        Directory.CreateDirectory(Path.GetDirectoryName(srcPath)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(dstUnrelated)!);
+
+        byte[] payloadSrc = new byte[FILE_SIZE];
+        Random.Shared.NextBytes(payloadSrc);
+
+        byte[] payloadDifferent = new byte[FILE_SIZE];
+        Random.Shared.NextBytes(payloadDifferent);
+
+        File.WriteAllBytes(srcPath, payloadSrc);
+        File.WriteAllBytes(dstUnrelated, payloadDifferent);
+        File.WriteAllBytes(dstMatching, payloadSrc);
+
+        MediaFile srcFile = new(
+            RelativePath: "photos/DSC0001.ARW",
+            FullPath: srcPath,
+            FileLength: FILE_SIZE,
+            LastWriteTimeUtc: DateTime.UtcNow,
+            Category: MediaCategory.PhotoRaw);
+
+        MediaFile unrelatedCand = new(
+            RelativePath: "photos/UNRELATED.ARW",
+            FullPath: dstUnrelated,
+            FileLength: FILE_SIZE,
+            LastWriteTimeUtc: DateTime.UtcNow,
+            Category: MediaCategory.PhotoRaw);
+
+        MediaFile matchingCand = new(
+            RelativePath: "photos/DSC0001.ARW",
+            FullPath: dstMatching,
+            FileLength: FILE_SIZE,
+            LastWriteTimeUtc: DateTime.UtcNow,
+            Category: MediaCategory.PhotoRaw);
+
+        BackupDestination destination = new("dest1", "Primary SSD", Path.Combine(_testDir, "backup_prio"));
+        // Place unrelated first in the candidate list
+        Dictionary<long, List<MediaFile>> index = new()
+        {
+            [FILE_SIZE] = new List<MediaFile> { unrelatedCand, matchingCand }
+        };
+
+        FileMatchStatus deepStatus = await _matcher.MatchFileAsync(
+            srcFile,
+            destination,
+            index,
+            VerificationMode.Deep);
+
+        Assert.Equal(MediaStatus.Verified, deepStatus.Status);
+        Assert.Equal(dstMatching, deepStatus.MatchedFilePath);
+    }
+
     public void Dispose()
     {
         try

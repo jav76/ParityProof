@@ -42,4 +42,15 @@ public sealed class StorageMediaDetectorTests
 
         Assert.InRange(count, 2, 3);
     }
+
+    [Fact]
+    public void GetRecommendedDriveWorkers_ExternalSsd_DoesNotThrottleToSdCardLimit()
+    {
+        // For external SSDs with active mounts, worker concurrency should be >= 4 (up to 8)
+        if (OperatingSystem.IsLinux() && System.IO.Directory.Exists("/media/jaret/Extreme SSD"))
+        {
+            int count = StorageMediaDetector.GetRecommendedDriveWorkers("/media/jaret/Extreme SSD");
+            Assert.True(count >= 4, $"Expected at least 4 workers for external SSD, got {count}");
+        }
+    }
 }

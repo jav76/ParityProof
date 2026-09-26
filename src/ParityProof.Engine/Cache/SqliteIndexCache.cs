@@ -12,7 +12,6 @@ using Microsoft.Data.Sqlite;
 
 namespace ParityProof.Engine.Cache;
 
-[LogMethod]
 public sealed class SqliteIndexCache : IIndexCache
 {
     private readonly string _connectionString;
