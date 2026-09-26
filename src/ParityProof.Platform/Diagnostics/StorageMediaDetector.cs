@@ -171,36 +171,22 @@ public static class StorageMediaDetector
                     bool isRemovableFlag = File.Exists(removablePath) &&
                                            string.Equals(File.ReadAllText(removablePath).Trim(), "1", StringComparison.Ordinal);
 
-                    // If non-rotational solid-state media (NVMe, SATA external SSD, USB SSD),
-                    // verify if it is an actual SSD rather than a slow single-channel SD card
-                    if (isNonRotational)
-                    {
-                        string modelPath = Path.Combine("/sys/block", baseDev, "device/model");
-                        string model = File.Exists(modelPath) ? File.ReadAllText(modelPath).Trim() : string.Empty;
-                        bool modelIndicatesSsd = model.Contains("SSD", StringComparison.OrdinalIgnoreCase) ||
-                                                 model.Contains("Extreme", StringComparison.OrdinalIgnoreCase) ||
-                                                 model.Contains("NVMe", StringComparison.OrdinalIgnoreCase) ||
-                                                 model.Contains("Solid State", StringComparison.OrdinalIgnoreCase);
+                    string modelPath = Path.Combine("/sys/block", baseDev, "device/model");
+                    string model = isNonRotational && File.Exists(modelPath)
+                        ? File.ReadAllText(modelPath).Trim()
+                        : string.Empty;
 
-                        if (modelIndicatesSsd || !isRemovableFlag)
-                        {
-                            return false;
-                        }
-                    }
-
-                    if (isRemovableFlag)
+                    bool? classification = ClassifyLinuxBlockDevice(isNonRotational, isRemovableFlag, model);
+                    if (classification.HasValue)
                     {
-                        return true;
+                        return classification.Value;
                     }
                 }
                 else
                 {
                     // Fallback for mock/test paths or unmounted virtual paths under removable directories
                     if (fullPath.StartsWith("/media/", StringComparison.Ordinal) ||
-                        fullPath.StartsWith("/run/media/", StringComparison.Ordinal) ||
-                        fullPath.Contains("SD_CARD", StringComparison.OrdinalIgnoreCase) ||
-                        fullPath.Contains("/sdcard", StringComparison.OrdinalIgnoreCase) ||
-                        fullPath.Contains("/mmcblk", StringComparison.OrdinalIgnoreCase))
+                        fullPath.StartsWith("/run/media/", StringComparison.Ordinal))
                     {
                         return true;
                     }
@@ -213,12 +199,6 @@ public static class StorageMediaDetector
                 DriveInfo driveInfo = new(root);
                 if (driveInfo.DriveType == DriveType.Removable)
                 {
-                    StorageMediaType detected = Detect(fullPath);
-                    if (detected == StorageMediaType.SolidState)
-                    {
-                        return false;
-                    }
-
                     return true;
                 }
             }
@@ -249,7 +229,7 @@ public static class StorageMediaDetector
                 string device = parts[0];
                 string mountPoint = UnescapeOctal(parts[1]);
 
-                if (fullPath.StartsWith(mountPoint, StringComparison.Ordinal) &&
+                if (IsUnderMountPoint(fullPath, mountPoint) &&
                     mountPoint.Length > longestMountPoint.Length)
                 {
                     longestMountPoint = mountPoint;
@@ -291,7 +271,7 @@ public static class StorageMediaDetector
                     string mountPoint = UnescapeOctal(parts[1]);
                     string fsType = parts[2];
 
-                    if (fullPath.StartsWith(mountPoint, StringComparison.Ordinal) &&
+                    if (IsUnderMountPoint(fullPath, mountPoint) &&
                         mountPoint.Length > longestMountPoint.Length)
                     {
                         longestMountPoint = mountPoint;
@@ -408,5 +388,40 @@ public static class StorageMediaDetector
         }
 
         return StorageMediaType.SolidState;
+    }
+
+    // Returns true (removable card), false (fixed or solid-state drive), or null when sysfs is inconclusive.
+    internal static bool? ClassifyLinuxBlockDevice(bool isNonRotational, bool isRemovableFlag, string model)
+    {
+        // Non-rotational covers both SSDs and USB card readers, so the removable flag and the model decide.
+        if (isNonRotational && (!isRemovableFlag || ModelIndicatesSsd(model)))
+        {
+            return false;
+        }
+
+        return isRemovableFlag ? true : null;
+    }
+
+    internal static bool IsUnderMountPoint(string fullPath, string mountPoint)
+    {
+        if (string.IsNullOrEmpty(mountPoint))
+        {
+            return false;
+        }
+
+        if (mountPoint == "/" || string.Equals(fullPath, mountPoint, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return fullPath.StartsWith(mountPoint.TrimEnd('/') + "/", StringComparison.Ordinal);
+    }
+
+    private static bool ModelIndicatesSsd(string model)
+    {
+        return model.Contains("SSD", StringComparison.OrdinalIgnoreCase) ||
+               model.Contains("Extreme", StringComparison.OrdinalIgnoreCase) ||
+               model.Contains("NVMe", StringComparison.OrdinalIgnoreCase) ||
+               model.Contains("Solid State", StringComparison.OrdinalIgnoreCase);
     }
 }

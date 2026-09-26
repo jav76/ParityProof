@@ -45,7 +45,8 @@ Adhere to the following conventions when authoring, modifying, or refactoring lo
 
 ## 4. IL Weaving with `[LogMethod]`
 AspectInjector performs compile-time IL weaving via the `[LogMethod]` attribute:
-- **Where to Use**: Apply `[LogMethod]` to core service classes or high-value orchestrator methods (e.g. `MediaCopier`, `MultiDestinationVerifier`, `ContentAddressedMatcher`, `FastDirectoryScanner.ScanDirectory`, `SqliteIndexCache`).
+- **Where to Use**: Apply `[LogMethod]` to core service classes or high-value orchestrator methods (e.g. `MediaCopier`, `MultiDestinationVerifier.VerifyAsync`, `FastDirectoryScanner.ScanDirectory`).
+- **Per-file services**: Classes invoked once or more per media file (e.g. `ContentAddressedMatcher`, `SqliteIndexCache`) must not carry class-level `[LogMethod]`. At thousands of calls per scan it floods the log sinks (this caused thousands of rotated SQLite log databases). Annotate only their orchestration entry points, if any.
 - **Where NOT to Use**:
   - **Never** apply to tight inner loops or high-frequency per-chunk/per-byte operations (e.g., `SimdHasher.ComputeXxHash64`, `ChunkReader.ReadNextChunk`).
   - **Never** apply to simple properties or fast accessor getters/setters.
