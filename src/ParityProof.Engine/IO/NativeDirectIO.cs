@@ -33,10 +33,12 @@ public static class NativeDirectIO
     [DllImport("libc", SetLastError = true, EntryPoint = "posix_fadvise")]
     private static extern int LinuxPosixFadvise(int fd, long offset, long len, int advice);
 
+    private const int POSIX_FADV_NORMAL = 0;
+    private const int POSIX_FADV_RANDOM = 1;
     private const int POSIX_FADV_SEQUENTIAL = 2;
-    private const int POSIX_FADV_NOREUSE = 5;
-
+    private const int POSIX_FADV_WILLNEED = 3;
     private const int POSIX_FADV_DONTNEED = 4;
+    private const int POSIX_FADV_NOREUSE = 5;
 
     public static void EvictPageCache(SafeFileHandle handle, long offset, long length)
     {
@@ -97,11 +99,54 @@ public static class NativeDirectIO
             try
             {
                 int fd = (int)handle.DangerousGetHandle();
-                _ = LinuxPosixFadvise(fd, 0, 0, POSIX_FADV_SEQUENTIAL | POSIX_FADV_NOREUSE);
+                _ = LinuxPosixFadvise(fd, 0, 0, POSIX_FADV_SEQUENTIAL);
+                _ = LinuxPosixFadvise(fd, 0, 0, POSIX_FADV_NOREUSE);
             }
             catch
             {
                 // Fallback gracefully to standard sequential caching
+            }
+        }
+
+        return handle;
+    }
+
+    public static SafeFileHandle OpenForProbeHashing(string filePath)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            SafeFileHandle winHandle = CreateFileW(
+                filePath,
+                GENERIC_READ,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                IntPtr.Zero,
+                OPEN_EXISTING,
+                0,
+                IntPtr.Zero);
+
+            if (!winHandle.IsInvalid)
+            {
+                return winHandle;
+            }
+        }
+
+        SafeFileHandle handle = File.OpenHandle(
+            filePath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete,
+            FileOptions.None);
+
+        if (OperatingSystem.IsLinux())
+        {
+            try
+            {
+                int fd = (int)handle.DangerousGetHandle();
+                _ = LinuxPosixFadvise(fd, 0, 0, POSIX_FADV_RANDOM);
+            }
+            catch
+            {
+                // Fallback gracefully to standard caching
             }
         }
 

@@ -14,7 +14,6 @@ using ParityProof.Engine.IO;
 
 namespace ParityProof.Engine.Matching;
 
-[LogMethod]
 public sealed class ContentAddressedMatcher
 {
     private readonly IIndexCache? _cache;
@@ -249,7 +248,12 @@ public sealed class ContentAddressedMatcher
                 onSourceBytesRead,
                 cancellationToken).ConfigureAwait(false);
 
-            foreach (MediaFile candidate in candidates)
+            List<MediaFile> orderedCandidates = candidates
+                .OrderByDescending(c => string.Equals(c.RelativePath, sourceFile.RelativePath, StringComparison.OrdinalIgnoreCase))
+                .ThenByDescending(c => string.Equals(Path.GetFileName(c.FullPath), sourceFileName, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            foreach (MediaFile candidate in orderedCandidates)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
@@ -305,7 +309,12 @@ public sealed class ContentAddressedMatcher
                 onSourceBytesRead,
                 cancellationToken).ConfigureAwait(false);
 
-            foreach (MediaFile candidate in candidates)
+            List<MediaFile> orderedCandidates = candidates
+                .OrderByDescending(c => string.Equals(c.RelativePath, sourceFile.RelativePath, StringComparison.OrdinalIgnoreCase))
+                .ThenByDescending(c => string.Equals(Path.GetFileName(c.FullPath), sourceFileName, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            foreach (MediaFile candidate in orderedCandidates)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
