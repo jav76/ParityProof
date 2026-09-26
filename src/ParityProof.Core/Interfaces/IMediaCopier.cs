@@ -9,14 +9,14 @@ namespace ParityProof.Core.Interfaces;
 
 public interface IMediaCopier
 {
-    Task<int> CopyMissingFilesAsync(
+    Task<CopyBatchResult> CopyMissingFilesAsync(
         IReadOnlyList<MediaFile> missingFiles,
         string destinationRootPath,
         IProgress<CopyProgressInfo>? progress = null,
         CancellationToken cancellationToken = default,
         PauseToken pauseToken = default);
 
-    Task<int> CopyMissingFilesAsync(
+    Task<CopyBatchResult> CopyMissingFilesAsync(
         IReadOnlyList<MediaFile> missingFiles,
         IReadOnlyList<string> destinationRootPaths,
         IProgress<CopyProgressInfo>? progress = null,
