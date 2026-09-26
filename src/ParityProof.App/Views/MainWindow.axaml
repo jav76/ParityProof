@@ -697,21 +697,19 @@
                             <Button Content="VERIFY BACKUPS" Command="{Binding VerifyCommand}"
                                     HotKey="Ctrl+R" AutomationProperties.Name="Verify Backups (Ctrl+R)"
                                     TabIndex="10"
-                                    IsEnabled="{Binding CanStartOperation}"
                                     HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
                                     Background="#2563EB" Foreground="#FFFFFF" FontWeight="Bold" Padding="14"/>
 
                             <Button Content="SCAN FOR DUPLICATES" Command="{Binding ScanDuplicatesCommand}"
                                     HotKey="Ctrl+D" AutomationProperties.Name="Scan for Duplicates (Ctrl+D)"
                                     TabIndex="11"
-                                    IsEnabled="{Binding CanStartOperation}"
                                     HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
                                     Background="#0F766E" Foreground="#FFFFFF" FontWeight="Bold" Padding="12"/>
 
-                            <Button Content="COPY MISSING TO BACKUP" Command="{Binding CopyMissingCommand}"
-                                    HotKey="Ctrl+Shift+C" AutomationProperties.Name="Copy Missing Files to Backup Destinations (Ctrl+Shift+C)"
+                            <Button Content="{Binding CopyToBackupButtonText}" Command="{Binding CopyMissingCommand}"
+                                    HotKey="Ctrl+Shift+C" AutomationProperties.Name="Copy Unprotected Files to Backup Destinations (Ctrl+Shift+C)"
                                     TabIndex="12"
-                                    IsVisible="{Binding HasMissingFiles}" IsEnabled="{Binding CanStartCopy}"
+                                    IsVisible="{Binding HasUnprotectedFiles}"
                                     HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
                                     Background="#D97706" Foreground="#FFFFFF" FontWeight="Bold" Padding="14"/>
                         </StackPanel>
