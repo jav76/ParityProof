@@ -248,10 +248,7 @@ public sealed class ContentAddressedMatcher
                 onSourceBytesRead,
                 cancellationToken).ConfigureAwait(false);
 
-            List<MediaFile> orderedCandidates = candidates
-                .OrderByDescending(c => string.Equals(c.RelativePath, sourceFile.RelativePath, StringComparison.OrdinalIgnoreCase))
-                .ThenByDescending(c => string.Equals(Path.GetFileName(c.FullPath), sourceFileName, StringComparison.OrdinalIgnoreCase))
-                .ToList();
+            List<MediaFile> orderedCandidates = OrderByPathAffinity(candidates, sourceFile.RelativePath, sourceFileName);
 
             foreach (MediaFile candidate in orderedCandidates)
             {
@@ -309,10 +306,7 @@ public sealed class ContentAddressedMatcher
                 onSourceBytesRead,
                 cancellationToken).ConfigureAwait(false);
 
-            List<MediaFile> orderedCandidates = candidates
-                .OrderByDescending(c => string.Equals(c.RelativePath, sourceFile.RelativePath, StringComparison.OrdinalIgnoreCase))
-                .ThenByDescending(c => string.Equals(Path.GetFileName(c.FullPath), sourceFileName, StringComparison.OrdinalIgnoreCase))
-                .ToList();
+            List<MediaFile> orderedCandidates = OrderByPathAffinity(candidates, sourceFile.RelativePath, sourceFileName);
 
             foreach (MediaFile candidate in orderedCandidates)
             {
@@ -363,10 +357,7 @@ public sealed class ContentAddressedMatcher
 
         if (mode == VerificationMode.Full)
         {
-            List<MediaFile> orderedCandidates = candidates
-                .OrderByDescending(c => string.Equals(c.RelativePath, sourceFile.RelativePath, StringComparison.OrdinalIgnoreCase))
-                .ThenByDescending(c => string.Equals(Path.GetFileName(c.FullPath), sourceFileName, StringComparison.OrdinalIgnoreCase))
-                .ToList();
+            List<MediaFile> orderedCandidates = OrderByPathAffinity(candidates, sourceFile.RelativePath, sourceFileName);
 
             bool isCleanPathMatch = orderedCandidates.Count == 1 &&
                 string.Equals(orderedCandidates[0].RelativePath, sourceFile.RelativePath, StringComparison.OrdinalIgnoreCase);
@@ -548,5 +539,21 @@ public sealed class ContentAddressedMatcher
             DestinationId: destination.Id,
             DestinationRootPath: destination.RootPath,
             Status: MediaStatus.Missing);
+    }
+
+    // Prefer the backup at the same relative path, then the same file name, so identical-size candidates are
+    // checked in the order most likely to match and a same-path match is the one reported.
+    private static List<MediaFile> OrderByPathAffinity(
+        List<MediaFile> candidates,
+        string sourceRelativePath,
+        string sourceFileName)
+    {
+        return candidates
+            .OrderByDescending(c => string.Equals(c.RelativePath, sourceRelativePath, StringComparison.OrdinalIgnoreCase))
+            .ThenByDescending(c => string.Equals(
+                Path.GetFileName(c.FullPath),
+                sourceFileName,
+                StringComparison.OrdinalIgnoreCase))
+            .ToList();
     }
 }
